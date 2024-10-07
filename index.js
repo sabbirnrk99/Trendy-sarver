@@ -11,7 +11,7 @@ const port = process.env.PORT || 5000;
 // Middleware
 app.use(cors({
     origin: [
-        //'http://localhost:5173',
+        'http://localhost:5173',
         'https://trendy-management.web.app',
         'https://trendy-management.firebaseapp.com',
     ],
