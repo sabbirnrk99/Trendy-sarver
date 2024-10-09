@@ -4,6 +4,7 @@ const multer = require('multer');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
+const fetch = require('node-fetch');
 const upload = multer({ dest: 'uploads/' });
 const XLSX = require('xlsx');
 const port = process.env.PORT || 5000;
@@ -50,6 +51,44 @@ async function run() {
         const usersCollection = database.collection('Users');
         const redxAreaCollection = database.collection('RedxArea');
         const pathaowAreaCollection = database.collection('PathaowArea');
+
+
+
+
+
+         // Fetch Redx Areas based on district
+        app.get('/api/redx/areas', async (req, res) => {
+            const { districtName } = req.query; // Get the district name from query parameters
+            const apiToken = process.env.REDX_API_TOKEN; // Store the token in your .env file for security
+
+            var myHeaders = new Headers();
+            myHeaders.append("API-ACCESS-TOKEN", `Bearer ${apiToken}`);
+
+            var requestOptions = {
+                method: 'GET',
+                headers: myHeaders,
+                redirect: 'follow'
+            };
+
+            try {
+                const response = await fetch(`https://openapi.redx.com.bd/v1.0.0-beta/areas?district_name=${encodeURIComponent(districtName)}`, requestOptions);
+                const data = await response.json();
+
+                if (response.ok) {
+                    res.status(200).json(data.areas); // Send the areas data to the client
+                } else {
+                    res.status(500).json({ message: 'Failed to fetch areas', error: data.message });
+                }
+            } catch (error) {
+                console.error('Error fetching areas from Redx:', error);
+                res.status(500).json({ message: 'Error fetching areas from Redx', error });
+            }
+        });
+
+
+
+
+        
 
 
 
