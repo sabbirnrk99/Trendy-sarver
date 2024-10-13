@@ -4,7 +4,6 @@ const multer = require('multer');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
-const fetch = require('node-fetch');
 const upload = multer({ dest: 'uploads/' });
 const XLSX = require('xlsx');
 const port = process.env.PORT || 5000;
@@ -56,10 +55,363 @@ async function run() {
 
 
 
-         // Fetch Redx Areas based on district
+        // Route to fetch Call Center Summary report with updatedAt filtering
+        app.post('/api/reports/call-center-summary', async (req, res) => {
+            const { startDate, endDate } = req.body;
+
+            // Log the incoming request body
+            console.log("Received request with date range:", { startDate, endDate });
+
+            // Convert dates to proper JavaScript Date objects
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59); // Include entire end date
+
+            console.log("Formatted start date:", start, "Formatted end date:", end);
+
+            try {
+                const users = await usersCollection.find({}).toArray();
+
+                // Log the number of users found
+                console.log("Number of users found:", users.length);
+
+                const results = [];
+
+                for (const user of users) {
+                    const userId = user.uid;
+                    const userName = user.userName;
+
+                    console.log(`Fetching orders for user: ${userName} (ID: ${userId})`);
+
+                    // Count orders assigned to the user, filtered by `updatedAt`
+                    const totalAssigned = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+
+                    console.log(`Total assigned orders for ${userName}:`, totalAssigned);
+
+                    if (totalAssigned === 0) {
+                        console.log(`Skipping user ${userName} because they have no assigned orders.`);
+                        continue; // Skip users with 0 assigned orders
+                    }
+
+                    // Fetch other statuses using `updatedAt`
+                    const totalPending = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Pending',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Pending orders for ${userName}:`, totalPending);
+
+                    const totalCancelled = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Cancel',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Cancelled orders for ${userName}:`, totalCancelled);
+
+                    const totalNoAnswer = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'No Answer',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total No Answer orders for ${userName}:`, totalNoAnswer);
+
+                    const totalRedx = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Redx',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Redx orders for ${userName}:`, totalRedx);
+
+                    const totalSteadfast = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Steadfast',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Steadfast orders for ${userName}:`, totalSteadfast);
+
+                    const totalPathaow = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Pathaow',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Pathaow orders for ${userName}:`, totalPathaow);
+
+                    const userData = {
+                        userName,
+                        totalAssigned,
+                        totalPending,
+                        totalCancelled,
+                        totalNoAnswer,
+                        totalRedx,
+                        totalSteadfast,
+                        totalPathaow,
+                    };
+
+                    // Log the collected data for the user
+                    console.log(`Collected data for ${userName}:`, userData);
+
+                    results.push(userData);
+                }
+
+                // Log the final results before sending the response
+                console.log("Final results:", results);
+
+                res.status(200).json(results);
+            } catch (error) {
+                console.error('Error fetching call center summary:', error);
+                res.status(500).json({ error: 'Error fetching call center summary' });
+            }
+        });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        // Route to fetch report data based on date range and various statuses
+        app.post('/api/reports/date-wise', async (req, res) => {
+            const { startDate, endDate } = req.body;
+
+            try {
+                // Ensure proper date parsing and include the entire end date
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+
+                // Logging start and end dates for debugging purposes
+                console.log(`Fetching report data for range: ${start} to ${end}`);
+
+                // Define the base query for all documents within the date range
+                const dateRangeQuery = { createdAt: { $gte: start, $lte: end } };
+
+                // Define the queries for different statuses and logistic statuses
+                const statusQueries = {
+                    totalRedxOrders: { ...dateRangeQuery, status: 'Redx' },
+                    totalSteadfastOrders: { ...dateRangeQuery, status: 'Steadfast' },
+                    totalPathaowOrders: { ...dateRangeQuery, status: 'Pathaow' },
+                    totalPending: { ...dateRangeQuery, status: 'Pending' },
+                    totalMemo: { ...dateRangeQuery, status: 'Memo' },
+                    totalCancelledMemo: { ...dateRangeQuery, status: 'Cancel' },
+                    totalNoAnswerOrders: { ...dateRangeQuery, status: 'No Answer' },
+                    totalPrintedMemo: { ...dateRangeQuery, markAsPrinted: 'True' },
+                    totalReturned: { ...dateRangeQuery, logisticStatus: 'Returned' },
+                    totalDamaged: { ...dateRangeQuery, logisticStatus: 'Damage' },
+                    totalPartial: { ...dateRangeQuery, logisticStatus: 'Partial' },
+                };
+
+                // Fetch all the counts in parallel using Promise.all for efficiency
+                const [
+                    totalOrders,
+                    totalRedxOrders,
+                    totalSteadfastOrders,
+                    totalPathaowOrders,
+                    totalPending,
+                    totalMemo,
+                    totalCancelledMemo,
+                    totalNoAnswerOrders,
+                    totalPrintedMemo,
+                    totalReturned,
+                    totalDamaged,
+                    totalPartial,
+                ] = await Promise.all([
+                    ordersCollection.countDocuments(dateRangeQuery),
+                    ordersCollection.countDocuments(statusQueries.totalRedxOrders),
+                    ordersCollection.countDocuments(statusQueries.totalSteadfastOrders),
+                    ordersCollection.countDocuments(statusQueries.totalPathaowOrders),
+                    ordersCollection.countDocuments(statusQueries.totalPending),
+                    ordersCollection.countDocuments(statusQueries.totalMemo),
+                    ordersCollection.countDocuments(statusQueries.totalCancelledMemo),
+                    ordersCollection.countDocuments(statusQueries.totalNoAnswerOrders),
+                    ordersCollection.countDocuments(statusQueries.totalPrintedMemo),
+                    ordersCollection.countDocuments(statusQueries.totalReturned),
+                    ordersCollection.countDocuments(statusQueries.totalDamaged),
+                    ordersCollection.countDocuments(statusQueries.totalPartial),
+                ]);
+
+                // Send the report data as a JSON response
+                res.status(200).json({
+                    totalOrders,
+                    totalRedxOrders,
+                    totalSteadfastOrders,
+                    totalPathaowOrders,
+                    totalPending,
+                    totalMemo,
+                    totalCancelledMemo,
+                    totalNoAnswerOrders,
+                    totalPrintedMemo,
+                    totalReturned,
+                    totalDamaged,
+                    totalPartial,
+                });
+            } catch (error) {
+                console.error('Error fetching report data:', error);
+                res.status(500).json({ error: 'Error fetching report data' });
+            }
+        });
+
+
+
+
+
+
+
+
+        //Code to Fetch Redx Status
+
+        app.get('/api/orders/redx-status/:trackingId', async (req, res) => {
+            const { trackingId } = req.params;
+
+            // Check if tracking ID is provided
+            if (!trackingId) {
+                return res.status(400).json({ message: "Tracking ID is required" });
+            }
+
+            console.log(`Fetching Redx status for tracking ID: ${trackingId}`);
+
+            const myHeaders = new Headers();
+            myHeaders.append("API-ACCESS-TOKEN", `Bearer ${process.env.REDX_API_TOKEN}`);
+
+            const requestOptions = {
+                method: 'GET',
+                headers: myHeaders,
+                redirect: 'follow'
+            };
+
+            try {
+                const response = await fetch(`https://openapi.redx.com.bd/v1.0.0-beta/parcel/info/${trackingId}`, requestOptions);
+                const result = await response.json();
+                //console.log(`Redx API Response: `, result);
+
+                if (response.ok) {
+                    const status = result.parcel?.status || 'Status not found';
+                    return res.status(200).json({ status });
+                } else {
+                    console.error('Failed to fetch status from Redx', result);
+                    return res.status(400).json({ message: 'Failed to fetch status from Redx', error: result });
+                }
+            } catch (error) {
+                console.error('Error fetching from Redx:', error);
+                return res.status(500).json({ message: 'Internal server error', error });
+            }
+        });
+
+
+
+
+
+
+        // redx order sent
+        app.post('/api/orders/send-to-redx', async (req, res) => {
+            const { orderId, customerName, phoneNumber, address, grandTotal, redxArea, redxAreaId } = req.body;
+
+            // Log the received request body
+            //console.log("Received request body:", req.body);
+
+            if (!orderId) {
+                // console.log("Missing orderId");
+                return res.status(400).json({ message: "Invoice ID is required" });
+            }
+
+            const myHeaders = new Headers();
+            myHeaders.append("API-ACCESS-TOKEN", `Bearer ${process.env.REDX_API_TOKEN}`);
+            myHeaders.append("Content-Type", "application/json");
+
+            // Log the raw data to be sent to Redx API
+            const raw = JSON.stringify({
+                customer_name: customerName,
+                customer_phone: phoneNumber,
+                delivery_area: redxArea,
+                delivery_area_id: redxAreaId,
+                customer_address: address,
+                merchant_invoice_id: orderId,
+                cash_collection_amount: grandTotal,
+                parcel_weight: 500,
+                value: grandTotal,
+            });
+
+            console.log("Raw payload for Redx API:", raw);
+
+            const requestOptions = {
+                method: 'POST',
+                headers: myHeaders,
+                body: raw,
+                redirect: 'follow'
+            };
+
+            try {
+                // Log the request before sending
+                // console.log("Sending request to Redx API...");
+
+                const response = await fetch("https://openapi.redx.com.bd/v1.0.0-beta/parcel", requestOptions);
+                const result = await response.json();
+
+                // Log the result from Redx API
+                // console.log("Response from Redx API:", result);
+
+                if (response.ok) {
+                    const consignmentId = result.tracking_id;
+
+                    // Log the consignmentId
+                    //  console.log("Received consignmentId from Redx API:", consignmentId);
+
+                    if (!consignmentId) {
+                        return res.status(400).json({ success: false, message: 'Failed to get consignmentId from Redx.' });
+                    }
+
+                    // Update the order with consignmentId in your MongoDB
+                    // console.log("Updating MongoDB with consignmentId...");
+                    await ordersCollection.updateOne(
+                        { invoiceId: orderId },
+                        { $set: { consignmentId, logisticStatus: 'Redx', updatedAt: new Date() } }
+                    );
+
+                    // Log success message
+                    //  console.log("Order updated successfully in MongoDB");
+
+                    // Send success response
+                    return res.status(200).json({ success: true, message: 'Order sent to Redx successfully', consignmentId });
+                } else {
+                    // Log the error from Redx API
+                    // console.error("Error from Redx API:", result);
+                    return res.status(400).json({ success: false, message: 'Failed to send order to Redx', error: result });
+                }
+            } catch (error) {
+                // Log any internal error
+                // console.error('Error sending to Redx:', error);
+                return res.status(500).json({ success: false, message: 'Internal server error', error });
+            }
+        });
+
+
+
+
+
+
+
+        // Fetch Redx Areas based on district
         app.get('/api/redx/areas', async (req, res) => {
-            const { districtName } = req.query; // Get the district name from query parameters
-            const apiToken = process.env.REDX_API_TOKEN; // Store the token in your .env file for security
+            let { districtName } = req.query;
+
+            if (!districtName) {
+                return res.status(400).json({ message: 'District name is required' });
+            }
+
+            districtName = districtName.toLowerCase(); // Convert to lowercase
+
+            const apiToken = process.env.REDX_API_TOKEN; // Ensure this token is valid
+
 
             var myHeaders = new Headers();
             myHeaders.append("API-ACCESS-TOKEN", `Bearer ${apiToken}`);
@@ -72,12 +424,18 @@ async function run() {
 
             try {
                 const response = await fetch(`https://openapi.redx.com.bd/v1.0.0-beta/areas?district_name=${encodeURIComponent(districtName)}`, requestOptions);
-                const data = await response.json();
+                const contentType = response.headers.get("content-type");
 
-                if (response.ok) {
-                    res.status(200).json(data.areas); // Send the areas data to the client
+                // Check if the response is JSON
+                if (contentType && contentType.includes("application/json")) {
+                    const data = await response.json();
+                    const areaNames = data.areas;
+                    res.status(200).json({ areas: areaNames });
                 } else {
-                    res.status(500).json({ message: 'Failed to fetch areas', error: data.message });
+                    // If it's not JSON, return an error
+                    const errorText = await response.text();
+                    console.error('Error fetching areas:', errorText); // Log the HTML response for debugging
+                    res.status(500).json({ message: 'Failed to fetch areas', error: errorText });
                 }
             } catch (error) {
                 console.error('Error fetching areas from Redx:', error);
@@ -88,7 +446,10 @@ async function run() {
 
 
 
-        
+
+
+
+
 
 
 
@@ -125,38 +486,153 @@ async function run() {
 
 
 
-
-
-
-
-
-        // Endpoint to update the order logistictStatus by consignmentId
-        app.put('/api/orders/update-status', async (req, res) => {
-            const { consignmentId, logistictStatus } = req.body;
+        // API to find an order by invoiceId and status 'Pathaow'
+        app.post('/api/orders/find', async (req, res) => {
+            const { invoiceId, status } = req.body;
 
             try {
-                // Find the order by consignmentId
-                const order = await ordersCollection.findOne({ consignmentId: parseInt(consignmentId) });
+                // Find the order by invoiceId and status 'Pathaow'
+                const order = await ordersCollection.findOne({ invoiceId, status });
 
                 if (!order) {
-                    return res.status(404).json({ message: 'Order not found with the given consignment ID' });
+                    return res.status(404).json({ message: 'Order not found with Pathaow status and the given Invoice ID.' });
                 }
 
-                // Update the order logistictStatus
+                res.status(200).json(order);
+            } catch (error) {
+                console.error('Error fetching order:', error);
+                res.status(500).json({ message: 'Error fetching order.' });
+            }
+        });
+
+        // API to update the logistic status of an order
+        app.patch('/api/orders/update-status/:id', async (req, res) => {
+            const { id } = req.params;
+            const { logisticStatus, returnedProduct } = req.body;
+
+            try {
+                // Update the logisticStatus and returnedProduct (if applicable)
+                const updateFields = {
+                    logisticStatus,
+                };
+
+                if (logisticStatus === 'Partial' && returnedProduct) {
+                    updateFields.returnedProduct = returnedProduct; // Only add returned products for Partial returns
+                }
+
+                const updateResult = await ordersCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateFields }
+                );
+
+                if (updateResult.modifiedCount === 0) {
+                    return res.status(404).json({ message: 'Order not found or logistic status not updated.' });
+                }
+
+                res.status(200).json({ message: 'Logistic status updated successfully.' });
+            } catch (error) {
+                console.error('Error updating logistic status:', error);
+                res.status(500).json({ message: 'Error updating logistic status.' });
+            }
+        });
+
+
+
+
+
+
+
+
+
+
+
+
+
+        // Find order by status and consignmentId steadFast
+        app.post('/api/orders/find', async (req, res) => {
+            const { consignmentId, status } = req.body;
+            console.log(status);
+            console.log(consignmentId);
+
+            try {
+                const order = await ordersCollection.findOne({ consignmentId: parseInt(consignmentId), status: status });
+
+                if (!order) {
+                    return res.status(404).json({ message: 'Order not found with the given consignment ID and status.' });
+                }
+
+                res.status(200).json(order);
+            } catch (error) {
+                res.status(500).json({ message: 'Failed to retrieve order', error });
+            }
+        });
+
+
+        // API to find Redx order by consignmentId (string)
+        app.post('/api/orders/find-redx', async (req, res) => {
+            const { consignmentId } = req.body;
+            console.log('Redx Consignment ID:', consignmentId);
+
+            try {
+                // Query to find Redx orders by consignmentId as a string
+                const order = await ordersCollection.findOne({ consignmentId: consignmentId, status: 'Redx' });
+
+                if (!order) {
+                    return res.status(404).json({ message: 'Redx order not found with the given consignment ID.' });
+                }
+
+                res.status(200).json(order);
+            } catch (error) {
+                console.error('Error retrieving Redx order:', error);
+                res.status(500).json({ message: 'Failed to retrieve Redx order', error });
+            }
+        });
+
+
+
+
+
+
+
+        // Endpoint to update the order logisticStatus by consignmentId and _id
+        app.patch('/api/orders/update-status/:id', async (req, res) => {
+            const { id } = req.params;
+            const { logisticStatus, returnedProduct } = req.body;
+
+            try {
+                // Find the order by _id
+                const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!order) {
+                    return res.status(404).json({ message: 'Order not found with the given ID' });
+                }
+
+                // Update the logisticStatus and patch the returnedProduct array
+                const updateFields = {
+                    logisticStatus,
+                    updatedAt: new Date(),
+                };
+
+                // If returnedProduct is provided, add it to the order
+                if (returnedProduct && Array.isArray(returnedProduct)) {
+                    updateFields.returnedProduct = returnedProduct;
+                }
+
                 const result = await ordersCollection.updateOne(
-                    { consignmentId: parseInt(consignmentId) },
-                    { $set: { logistictStatus, updatedAt: new Date() } } // Update logistictStatus only
+                    { _id: new ObjectId(id) },
+                    { $set: updateFields }
                 );
 
                 if (result.modifiedCount > 0) {
-                    return res.status(200).json({ message: `Order logistictStatus updated to "${logistictStatus}" successfully!` });
+                    return res.status(200).json({ message: `Order logisticStatus updated to "${logisticStatus}" successfully!` });
                 } else {
-                    return res.status(500).json({ message: 'Failed to update order logistictStatus' });
+                    return res.status(500).json({ message: 'Failed to update order logisticStatus' });
                 }
             } catch (error) {
                 return res.status(500).json({ message: 'Error updating the order', error });
             }
         });
+
 
 
 
