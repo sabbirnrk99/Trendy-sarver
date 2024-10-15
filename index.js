@@ -54,6 +54,76 @@ async function run() {
 
 
 
+        app.get('/api/orders/stock-out', async (req, res) => {
+            try {
+                // Fetch orders with status 'Stock Out'
+               // console.log('Fetching orders with status "Stock Out"...');
+                const stockOutOrders = await ordersCollection.find({ status: 'Stock Out' }).toArray();
+
+                // Log the fetched orders
+               // console.log('Fetched Stock Out orders:', stockOutOrders);
+
+                // Group orders by parentSku and calculate order count and total quantity for each
+                const groupedData = stockOutOrders.reduce((acc, order) => {
+                   // console.log('Processing order:', order);
+
+                    // Ensure 'products' field exists and is an array
+                    if (order.products && Array.isArray(order.products)) {
+                        order.products.forEach((product) => {
+                            const { parentSku, qty } = product;
+                           // console.log('Processing product:', product);
+
+                            if (!parentSku) {
+                                console.error('Product missing parentSku:', product);
+                                return;
+                            }
+
+                            // Parse 'qty' as a number from a string
+                            const quantity = parseFloat(qty) || 0;
+
+                            if (!acc[parentSku]) {
+                                acc[parentSku] = { parentSku, orderQuantity: 0, totalQuantity: 0 };
+                              //  console.log(`Initializing new parentSku in accumulator: ${parentSku}`);
+                            }
+
+                            // Increment order count and total product quantity
+                            acc[parentSku].orderQuantity += 1;
+                            acc[parentSku].totalQuantity += quantity;
+
+                           // console.log(`Updated ${parentSku} - orderQuantity: ${acc[parentSku].orderQuantity}, totalQuantity: ${acc[parentSku].totalQuantity}`);
+                        });
+                    } else {
+                        console.warn(`Order ${order.invoiceId || 'Unknown ID'} has no valid products array.`);
+                    }
+
+                    return acc;
+                }, {});
+
+                // Convert the grouped data into an array
+                const result = Object.values(groupedData);
+
+                // Log the final result
+               // console.log('Grouped data result:', result);
+
+                // Send the result back to the frontend
+                res.status(200).json(result);
+            } catch (error) {
+                console.error('Error fetching Stock Out orders:', error);
+                res.status(500).json({ message: 'Failed to retrieve Stock Out data' });
+            }
+        });
+
+
+
+
+
+
+
+
+
+
+
+
 
         // Route to fetch Call Center Summary report with updatedAt filtering
         app.post('/api/reports/call-center-summary', async (req, res) => {
@@ -278,7 +348,7 @@ async function run() {
                 return res.status(400).json({ message: "Tracking ID is required" });
             }
 
-            console.log(`Fetching Redx status for tracking ID: ${trackingId}`);
+            //console.log(`Fetching Redx status for tracking ID: ${trackingId}`);
 
             const myHeaders = new Headers();
             myHeaders.append("API-ACCESS-TOKEN", `Bearer ${process.env.REDX_API_TOKEN}`);
@@ -341,7 +411,7 @@ async function run() {
                 value: grandTotal,
             });
 
-            console.log("Raw payload for Redx API:", raw);
+           // console.log("Raw payload for Redx API:", raw);
 
             const requestOptions = {
                 method: 'POST',
@@ -551,8 +621,8 @@ async function run() {
         // Find order by status and consignmentId steadFast
         app.post('/api/orders/find', async (req, res) => {
             const { consignmentId, status } = req.body;
-            console.log(status);
-            console.log(consignmentId);
+           // console.log(status);
+           // console.log(consignmentId);
 
             try {
                 const order = await ordersCollection.findOne({ consignmentId: parseInt(consignmentId), status: status });
@@ -571,7 +641,7 @@ async function run() {
         // API to find Redx order by consignmentId (string)
         app.post('/api/orders/find-redx', async (req, res) => {
             const { consignmentId } = req.body;
-            console.log('Redx Consignment ID:', consignmentId);
+           // console.log('Redx Consignment ID:', consignmentId);
 
             try {
                 // Query to find Redx orders by consignmentId as a string
@@ -700,12 +770,31 @@ async function run() {
 
 
         /**
-        * Update Order Status
-        */
+ * Update Order Status
+ */
         app.put('/api/orders/:id', async (req, res) => {
             const { id } = req.params;
-            const { consignmentId, status, redxDistrict, note, redxArea, comment, customerName, phoneNumber, address, deliveryCost, advance, discount } = req.body;
 
+            // Log incoming request body
+           // console.log("Received request for updating order:", req.body);
+
+            const {
+                consignmentId,
+                status,
+                redxDistrict,
+                note,
+                redxArea,
+                comment,
+                customerName,
+                phoneNumber,
+                address,
+                deliveryCost,
+                advance,
+                discount,
+                scheduleDate,
+            } = req.body;
+
+            // Prepare the update data object and log the initial data
             const updateData = {
                 status,
                 customerName,
@@ -716,34 +805,76 @@ async function run() {
                 deliveryCost: parseFloat(deliveryCost),
                 advance: parseFloat(advance),
                 discount: parseFloat(discount),
-                products: req.body.products.map(product => ({ ...product, total: parseFloat(product.total) })),
+                products: req.body.products.map(product => ({
+                    ...product,
+                    total: parseFloat(product.total),
+                })),
                 grandTotal: parseFloat(req.body.grandTotal),
                 updatedAt: new Date(),
-                district: (redxDistrict),
-                area: (redxArea),
-
+                district: redxDistrict,
+                area: redxArea,
             };
-            console.log(updateData);
 
+            // Log the initial updateData
+           // console.log("Initial update data:", updateData);
+
+            // Add specific logic for different statuses
             if (status === 'Redx' || status === 'Pathaow') {
                 updateData.district = redxDistrict;
                 updateData.area = redxArea;
+                console.log("Redx/Pathaow selected - District and Area updated:", {
+                    district: redxDistrict,
+                    area: redxArea,
+                });
             }
-            if (status === 'Hold') {
+
+            if (status === 'Cancel') {
+                // Ensure comment is provided for cancellation
+                if (!comment) {
+                    console.log("Cancel status selected but no comment provided.");
+                    return res.status(400).json({ message: 'Comment is required for cancellation.' });
+                }
                 updateData.comment = comment;
+                console.log("Cancel Status - Comment added:", comment);
             }
+
+            if (status === 'No Answer') {
+                // Increment the attempt count for No Answer status
+                updateData.attempt = (req.body.attempt || 0) + 1;
+                console.log("No Answer Status - Attempt incremented:", updateData.attempt);
+            }
+
+            if (status === 'Schedule Memo') {
+                // Ensure scheduleDate is provided for Schedule Memo
+                if (!scheduleDate) {
+                    console.log("Schedule Memo status selected but no schedule date provided.");
+                    return res.status(400).json({ message: 'Schedule date is required for Schedule Memo.' });
+                }
+                updateData.scheduleDate = scheduleDate;
+                console.log("Schedule Memo Status - Schedule date added:", scheduleDate);
+            }
+
+            // Log the final updated data before sending to database
+            console.log("Final update data before database update:", updateData);
 
             try {
                 const result = await ordersCollection.updateOne(
                     { _id: new ObjectId(id) },
                     { $set: updateData }
                 );
+
+                // Log the result from MongoDB
+                console.log("MongoDB update result:", result);
+
                 if (result.modifiedCount > 0) {
+                    console.log("Order updated successfully!");
                     res.status(200).json({ message: 'Order updated successfully!' });
                 } else {
+                    console.log("Order not found or no changes made.");
                     res.status(404).json({ message: 'Order not found' });
                 }
             } catch (error) {
+                console.error('Error updating order:', error);
                 res.status(500).json({ message: 'Error updating order', error });
             }
         });
