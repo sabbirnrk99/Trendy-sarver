@@ -57,21 +57,21 @@ async function run() {
         app.get('/api/orders/stock-out', async (req, res) => {
             try {
                 // Fetch orders with status 'Stock Out'
-               // console.log('Fetching orders with status "Stock Out"...');
+                // console.log('Fetching orders with status "Stock Out"...');
                 const stockOutOrders = await ordersCollection.find({ status: 'Stock Out' }).toArray();
 
                 // Log the fetched orders
-               // console.log('Fetched Stock Out orders:', stockOutOrders);
+                // console.log('Fetched Stock Out orders:', stockOutOrders);
 
                 // Group orders by parentSku and calculate order count and total quantity for each
                 const groupedData = stockOutOrders.reduce((acc, order) => {
-                   // console.log('Processing order:', order);
+                    // console.log('Processing order:', order);
 
                     // Ensure 'products' field exists and is an array
                     if (order.products && Array.isArray(order.products)) {
                         order.products.forEach((product) => {
                             const { parentSku, qty } = product;
-                           // console.log('Processing product:', product);
+                            // console.log('Processing product:', product);
 
                             if (!parentSku) {
                                 console.error('Product missing parentSku:', product);
@@ -83,14 +83,14 @@ async function run() {
 
                             if (!acc[parentSku]) {
                                 acc[parentSku] = { parentSku, orderQuantity: 0, totalQuantity: 0 };
-                              //  console.log(`Initializing new parentSku in accumulator: ${parentSku}`);
+                                //  console.log(`Initializing new parentSku in accumulator: ${parentSku}`);
                             }
 
                             // Increment order count and total product quantity
                             acc[parentSku].orderQuantity += 1;
                             acc[parentSku].totalQuantity += quantity;
 
-                           // console.log(`Updated ${parentSku} - orderQuantity: ${acc[parentSku].orderQuantity}, totalQuantity: ${acc[parentSku].totalQuantity}`);
+                            // console.log(`Updated ${parentSku} - orderQuantity: ${acc[parentSku].orderQuantity}, totalQuantity: ${acc[parentSku].totalQuantity}`);
                         });
                     } else {
                         console.warn(`Order ${order.invoiceId || 'Unknown ID'} has no valid products array.`);
@@ -103,7 +103,7 @@ async function run() {
                 const result = Object.values(groupedData);
 
                 // Log the final result
-               // console.log('Grouped data result:', result);
+                // console.log('Grouped data result:', result);
 
                 // Send the result back to the frontend
                 res.status(200).json(result);
@@ -125,6 +125,7 @@ async function run() {
 
 
 
+        
         // Route to fetch Call Center Summary report with updatedAt filtering
         app.post('/api/reports/call-center-summary', async (req, res) => {
             const { startDate, endDate } = req.body;
@@ -209,6 +210,21 @@ async function run() {
                     });
                     console.log(`Total Pathaow orders for ${userName}:`, totalPathaow);
 
+                    // Fetch Schedule Memo and Stock Out counts
+                    const totalScheduleMemo = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Schedule Memo',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Schedule Memo orders for ${userName}:`, totalScheduleMemo);
+
+                    const totalStockOut = await ordersCollection.countDocuments({
+                        assignedTo: userId,
+                        status: 'Stock Out',
+                        updatedAt: { $gte: start, $lte: end },
+                    });
+                    console.log(`Total Stock Out orders for ${userName}:`, totalStockOut);
+
                     const userData = {
                         userName,
                         totalAssigned,
@@ -218,6 +234,8 @@ async function run() {
                         totalRedx,
                         totalSteadfast,
                         totalPathaow,
+                        totalScheduleMemo,
+                        totalStockOut,
                     };
 
                     // Log the collected data for the user
@@ -235,6 +253,7 @@ async function run() {
                 res.status(500).json({ error: 'Error fetching call center summary' });
             }
         });
+
 
 
 
@@ -411,7 +430,7 @@ async function run() {
                 value: grandTotal,
             });
 
-           // console.log("Raw payload for Redx API:", raw);
+            // console.log("Raw payload for Redx API:", raw);
 
             const requestOptions = {
                 method: 'POST',
@@ -621,8 +640,8 @@ async function run() {
         // Find order by status and consignmentId steadFast
         app.post('/api/orders/find', async (req, res) => {
             const { consignmentId, status } = req.body;
-           // console.log(status);
-           // console.log(consignmentId);
+            // console.log(status);
+            // console.log(consignmentId);
 
             try {
                 const order = await ordersCollection.findOne({ consignmentId: parseInt(consignmentId), status: status });
@@ -641,7 +660,7 @@ async function run() {
         // API to find Redx order by consignmentId (string)
         app.post('/api/orders/find-redx', async (req, res) => {
             const { consignmentId } = req.body;
-           // console.log('Redx Consignment ID:', consignmentId);
+            // console.log('Redx Consignment ID:', consignmentId);
 
             try {
                 // Query to find Redx orders by consignmentId as a string
@@ -776,7 +795,7 @@ async function run() {
             const { id } = req.params;
 
             // Log incoming request body
-           // console.log("Received request for updating order:", req.body);
+            // console.log("Received request for updating order:", req.body);
 
             const {
                 consignmentId,
@@ -816,7 +835,7 @@ async function run() {
             };
 
             // Log the initial updateData
-           // console.log("Initial update data:", updateData);
+            // console.log("Initial update data:", updateData);
 
             // Add specific logic for different statuses
             if (status === 'Redx' || status === 'Pathaow') {
