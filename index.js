@@ -55,6 +55,114 @@ async function run() {
 
 
 
+        app.post('/api/orders/consignment-upload', async (req, res) => {
+            const { orders } = req.body;
+
+            if (!orders || !Array.isArray(orders)) {
+                return res.status(400).json({ message: 'Invalid data format. Orders should be an array.' });
+            }
+
+            try {
+                for (let order of orders) {
+                    const invoiceId = order.invoiceId;
+
+                    // Check if the order with the same invoiceId already exists
+                    const existingOrder = await ordersCollection.findOne({ invoiceId });
+
+                    if (existingOrder) {
+                        // Merge products if the order already exists
+                        for (let product of order.products) {
+                            const existingProductIndex = existingOrder.products.findIndex(p => p.sku === product.sku);
+                            if (existingProductIndex !== -1) {
+                                // If the product exists, update its quantity and total
+                                existingOrder.products[existingProductIndex].qty += parseInt(product.qty);
+                                existingOrder.products[existingProductIndex].total += parseFloat(product.total);
+                            } else {
+                                // If the product doesn't exist, add it to the products array
+                                existingOrder.products.push({
+                                    parentSku: product.parentSku,
+                                    sku: product.sku,
+                                    selling_price: parseFloat(product.selling_price),
+                                    qty: parseInt(product.qty),
+                                    total: parseFloat(product.total),
+                                    skus: product.skus.map(subSku => ({
+                                        sku: subSku.sku,
+                                        name: subSku.name,
+                                        buying_price: parseFloat(subSku.buying_price),
+                                        selling_price: parseFloat(subSku.selling_price),
+                                        qty: parseInt(subSku.qty),
+                                    })),
+                                });
+                            }
+                        }
+
+                        // Update existing order's total amounts and consignment details
+                        existingOrder.deliveryCost = parseFloat(order.deliveryCost) || existingOrder.deliveryCost;
+                        existingOrder.advance = parseFloat(order.advance) || existingOrder.advance;
+                        existingOrder.discount = parseFloat(order.discount) || existingOrder.discount;
+                        existingOrder.grandTotal = existingOrder.products.reduce((sum, product) => sum + product.total, 0);
+                        existingOrder.consignmentId = order.consignmentId || existingOrder.consignmentId;
+                        existingOrder.status = order.status || existingOrder.status;
+
+                        // Update the order in the database
+                        await ordersCollection.updateOne(
+                            { invoiceId },
+                            { $set: existingOrder }
+                        );
+                    } else {
+                        // If the order doesn't exist, create a new order
+                        const newOrder = {
+                            invoiceId: order.invoiceId || '',
+                            date: new Date(order.date) || null,
+                            pageName: order.pageName || '',
+                            customerName: order.customerName || '',
+                            phoneNumber: order.phoneNumber || '',
+                            address: order.address || '',
+                            note: order.note || '',
+                            products: order.products.map(product => ({
+                                parentSku: product.parentSku,
+                                sku: product.sku,
+                                selling_price: parseFloat(product.selling_price),
+                                qty: parseInt(product.qty),
+                                total: parseFloat(product.total),
+                                skus: product.skus.map(subSku => ({
+                                    sku: subSku.sku,
+                                    name: subSku.name,
+                                    buying_price: parseFloat(subSku.buying_price),
+                                    selling_price: parseFloat(subSku.selling_price),
+                                    qty: parseInt(subSku.qty),
+                                })),
+                            })),
+                            deliveryCost: parseFloat(order.deliveryCost) || 0,
+                            advance: parseFloat(order.advance) || 0,
+                            discount: parseFloat(order.discount) || 0,
+                            grandTotal: parseFloat(order.grandTotal) || 0,
+                            consignmentId: order.consignmentId || '',
+                            status: order.status || 'Pending',
+                            createdAt: new Date(),
+                            updatedAt: new Date(),
+                        };
+
+                        // Insert the new order into the database
+                        await ordersCollection.insertOne(newOrder);
+                    }
+                }
+
+                res.status(200).json({ message: 'Orders uploaded and merged successfully with consignment details.' });
+            } catch (error) {
+                console.error('Error uploading and merging orders with consignment:', error);
+                res.status(500).json({ message: 'Error uploading and merging orders with consignment.', error });
+            }
+        });
+
+
+
+
+
+
+
+
+
 
 
 
