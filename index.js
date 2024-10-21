@@ -1097,57 +1097,111 @@ async function run() {
       }
     });
 
-    // Find order by status and consignmentId steadFast
+    // Find order by status and either consignmentId or invoiceId
+    // Find order by status and either consignmentId or invoiceId
     app.post("/api/orders/find", async (req, res) => {
-      const { consignmentId, status } = req.body;
-      // console.log(status);
-      // console.log(consignmentId);
+      const { consignmentId, invoiceId, status } = req.body;
+
+      // Log the received data to verify what's being passed
+      console.log("API called with status:", status);
+      console.log(
+        "Received Consignment ID:",
+        consignmentId,
+        "Received Invoice ID:",
+        invoiceId
+      );
 
       try {
-        const order = await ordersCollection.findOne({
-          consignmentId: parseInt(consignmentId),
-          status: status,
-        });
+        const query = {
+          status, // Always include status in the query
+        };
+
+        // If invoiceId is present, search by invoiceId, otherwise by consignmentId
+        if (invoiceId) {
+          query.invoiceId = String(invoiceId); // Ensure invoiceId is treated as a string
+          console.log("Searching with Invoice ID:", invoiceId);
+        } else if (consignmentId) {
+          query.consignmentId = Number(consignmentId); // Ensure consignmentId is treated as a number
+          console.log("Searching with Consignment ID:", consignmentId);
+        } else {
+          console.error("No ID provided for search.");
+          return res
+            .status(400)
+            .json({ message: "No valid ID provided for the search." });
+        }
+
+        // Perform the query
+        const order = await ordersCollection.findOne(query);
+        console.log("Order found:", order); // Log the found order
 
         if (!order) {
+          console.log("No order found.");
           return res.status(404).json({
-            message:
-              "Order not found with the given consignment ID and status.",
+            message: "Order not found with the given ID and status.",
           });
         }
 
         res.status(200).json(order);
       } catch (error) {
+        console.error("Failed to retrieve order:", error);
         res.status(500).json({ message: "Failed to retrieve order", error });
       }
     });
 
+
+
+
     // API to find Redx order by consignmentId (string)
     app.post("/api/orders/find-redx", async (req, res) => {
-      const { consignmentId } = req.body;
+      const { consignmentId, invoiceId, status } = req.body;
       // console.log('Redx Consignment ID:', consignmentId);
 
+
+      // Log the received data to verify what's being passed
+      console.log("API called with status:", status);
+      console.log(
+        "Received Consignment ID:",
+        consignmentId,
+        "Received Invoice ID:",
+        invoiceId
+      );
+
       try {
-        // Query to find Redx orders by consignmentId as a string
-        const order = await ordersCollection.findOne({
-          consignmentId: consignmentId,
-          status: "Redx",
-        });
-
-        if (!order) {
-          return res.status(404).json({
-            message: "Redx order not found with the given consignment ID.",
-          });
+        const query = {
+            status, // Always include status in the query
+          };
+  
+          // If invoiceId is present, search by invoiceId, otherwise by consignmentId
+          if (invoiceId) {
+            query.invoiceId = invoiceId; // Ensure invoiceId is treated as a string
+            console.log("Searching with Invoice ID:", invoiceId);
+          } else if (consignmentId) {
+            query.consignmentId = String(consignmentId); // Ensure consignmentId is treated as a number
+            console.log("Searching with Consignment ID:", consignmentId);
+          } else {
+            console.error("No ID provided for search.");
+            return res
+              .status(400)
+              .json({ message: "No valid ID provided for the search." });
+          }
+  
+          // Perform the query
+          const order = await ordersCollection.findOne(query);
+          console.log("Order found:", order); // Log the found order
+  
+          if (!order) {
+            console.log("No order found.");
+            return res.status(404).json({
+              message: "Order not found with the given ID and status.",
+            });
+          }
+  
+          res.status(200).json(order);
+        } catch (error) {
+          console.error("Failed to retrieve order:", error);
+          res.status(500).json({ message: "Failed to retrieve order", error });
         }
-
-        res.status(200).json(order);
-      } catch (error) {
-        console.error("Error retrieving Redx order:", error);
-        res
-          .status(500)
-          .json({ message: "Failed to retrieve Redx order", error });
-      }
-    });
+      });
 
     // Endpoint to update the order logisticStatus by consignmentId and _id
     app.patch("/api/orders/update-status/:id", async (req, res) => {
