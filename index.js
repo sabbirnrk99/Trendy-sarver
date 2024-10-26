@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const cron = require('node-cron');
 const multer = require("multer");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -48,6 +49,119 @@ async function run() {
     const usersCollection = database.collection("Users");
     const redxAreaCollection = database.collection("RedxArea");
     const pathaowAreaCollection = database.collection("PathaowArea");
+    const steadFastPaymentCollection = database.collection("SteadFastPayment");
+
+
+
+    // Function to update OrderManagement based on SteadFastPayment data
+async function updateOrderManagement() {
+  console.log("Running updateOrderManagement task...");
+
+  try {
+      const steadFastPayments = await steadFastPaymentCollection.find({}).toArray();
+
+      for (const payment of steadFastPayments) {
+          const { invoice, status, codAmount, shippingCharge } = payment;
+
+          // Find corresponding order in OrderManagement with the matching invoice and status: Steadfast
+          const order = await ordersCollection.findOne({
+              invoiceId: invoice,
+              status: "Steadfast"
+          });
+
+          if (order) {
+              // Update order based on the status of the payment
+              const updateFields = {};
+
+              if (status === "Returned") {
+                  if (order.logisticStatus !== "Returned") {
+                      updateFields.logisticStatus = "Returned";
+                      updateFields.shippingCharge = shippingCharge;
+                  }
+              } else if (status === "Completed") {
+                  if (order.logisticStatus !== "Completed") {
+                      updateFields.logisticStatus = "Completed";
+                      updateFields.codAmount = codAmount;
+                      updateFields.shippingCharge = shippingCharge;
+                  }
+              } else if (status === "Partial") {
+                  if (order.logisticStatus !== "Partial") {
+                      updateFields.logisticStatus = "Partial";
+                      updateFields.codAmount = codAmount;
+                      updateFields.shippingCharge = shippingCharge;
+                  }
+              }else if (status === "Damage") {
+                if (order.logisticStatus !== "Damage") {
+                    updateFields.logisticStatus = "Damage";
+                    updateFields.codAmount = codAmount;
+                    updateFields.shippingCharge = shippingCharge;
+                }
+            }
+              
+
+              if (Object.keys(updateFields).length > 0) {
+                  await ordersCollection.updateOne(
+                      { _id: order._id },
+                      { $set: updateFields }
+                  );
+                  console.log(`Updated order ${invoice} with logisticStatus: ${updateFields.logisticStatus}`);
+              }
+          } else {
+              console.log(`No matching order found for invoice: ${invoice}`);
+          }
+      }
+  } catch (error) {
+      console.error("Error updating OrderManagement:", error);
+  }
+}
+
+// Schedule the task to run every 4 hours
+cron.schedule('0 */4 * * *', updateOrderManagement);
+
+
+
+     // Set up multer for file storage
+    const upload = multer({ dest: 'uploads/' }); // 'uploads/' directory will store the files temporarily
+
+    // Endpoint to upload and process Excel file
+app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
+  if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+  }
+
+  try {
+      // Read and parse the uploaded Excel file
+      const workbook = XLSX.readFile(req.file.path);
+      const sheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[sheetName];
+      const data = XLSX.utils.sheet_to_json(worksheet);
+
+      // Structure data according to MongoDB collection
+      const processedData = data.map(row => ({
+          consignmentId: row.ConsignmentId || '',
+          trackingCode: row["Tracking Code"] || '',
+          invoice: row.Invoice || '',
+          codAmount: row["COD Amount"] || 0,
+          shippingCharge: row["Shipping Charge"] || 0,
+          status: row.Status || '',
+      }));
+
+      // Insert data into the SteadFastPayment collection
+      const insertResult = await steadFastPaymentCollection.insertMany(processedData);
+
+      // Send success response
+      res.status(200).json({
+          message: 'File uploaded and processed successfully!',
+          insertedCount: insertResult.insertedCount
+      });
+  } catch (error) {
+      console.error("Error processing file:", error);
+      res.status(500).json({ message: "Failed to process the file", error: error.message });
+  }
+});
+
+
+
 
     // Bulk update order status to "Stock Out" by invoiceId
     app.post("/api/orders/bulk-update-status", async (req, res) => {
@@ -1148,14 +1262,10 @@ async function run() {
       }
     });
 
-
-
-
     // API to find Redx order by consignmentId (string)
     app.post("/api/orders/find-redx", async (req, res) => {
       const { consignmentId, invoiceId, status } = req.body;
       // console.log('Redx Consignment ID:', consignmentId);
-
 
       // Log the received data to verify what's being passed
       console.log("API called with status:", status);
@@ -1168,40 +1278,40 @@ async function run() {
 
       try {
         const query = {
-            status, // Always include status in the query
-          };
-  
-          // If invoiceId is present, search by invoiceId, otherwise by consignmentId
-          if (invoiceId) {
-            query.invoiceId = invoiceId; // Ensure invoiceId is treated as a string
-            console.log("Searching with Invoice ID:", invoiceId);
-          } else if (consignmentId) {
-            query.consignmentId = String(consignmentId); // Ensure consignmentId is treated as a number
-            console.log("Searching with Consignment ID:", consignmentId);
-          } else {
-            console.error("No ID provided for search.");
-            return res
-              .status(400)
-              .json({ message: "No valid ID provided for the search." });
-          }
-  
-          // Perform the query
-          const order = await ordersCollection.findOne(query);
-          console.log("Order found:", order); // Log the found order
-  
-          if (!order) {
-            console.log("No order found.");
-            return res.status(404).json({
-              message: "Order not found with the given ID and status.",
-            });
-          }
-  
-          res.status(200).json(order);
-        } catch (error) {
-          console.error("Failed to retrieve order:", error);
-          res.status(500).json({ message: "Failed to retrieve order", error });
+          status, // Always include status in the query
+        };
+
+        // If invoiceId is present, search by invoiceId, otherwise by consignmentId
+        if (invoiceId) {
+          query.invoiceId = invoiceId; // Ensure invoiceId is treated as a string
+          console.log("Searching with Invoice ID:", invoiceId);
+        } else if (consignmentId) {
+          query.consignmentId = String(consignmentId); // Ensure consignmentId is treated as a number
+          console.log("Searching with Consignment ID:", consignmentId);
+        } else {
+          console.error("No ID provided for search.");
+          return res
+            .status(400)
+            .json({ message: "No valid ID provided for the search." });
         }
-      });
+
+        // Perform the query
+        const order = await ordersCollection.findOne(query);
+        console.log("Order found:", order); // Log the found order
+
+        if (!order) {
+          console.log("No order found.");
+          return res.status(404).json({
+            message: "Order not found with the given ID and status.",
+          });
+        }
+
+        res.status(200).json(order);
+      } catch (error) {
+        console.error("Failed to retrieve order:", error);
+        res.status(500).json({ message: "Failed to retrieve order", error });
+      }
+    });
 
     // Endpoint to update the order logisticStatus by consignmentId and _id
     app.patch("/api/orders/update-status/:id", async (req, res) => {
@@ -1818,15 +1928,30 @@ async function run() {
     });
 
     //************************************************************************************************************ */
-    //************************************************************************************************************ */
+
+    // In your backend
+    app.get("/api/orders/check-invoice", async (req, res) => {
+      const { invoiceId } = req.query;
+
+      if (!invoiceId) {
+        return res.status(400).json({ message: "Invoice ID is required" });
+      }
+
+      try {
+        const order = await ordersCollection.findOne({ invoiceId });
+        if (order) {
+          return res.json({ exists: true });
+        }
+        return res.json({ exists: false });
+      } catch (error) {
+        console.error("Error checking invoice ID:", error);
+        res.status(500).json({ message: "Failed to check invoice ID", error });
+      }
+    });
     //************************************************************************************************************ */
 
-    /**
-     * Order Routes
-     */
-
-    // 1. Create an order
-    app.post("/api/orders", async (req, res) => {
+    // 1. Create an exchange order
+    app.post("/api/orders/exchange", async (req, res) => {
       const {
         invoiceId,
         date,
@@ -1835,6 +1960,8 @@ async function run() {
         phoneNumber,
         address,
         note,
+        status = "Exchange",
+        consignmentId,
         products,
         deliveryCost,
         advance,
@@ -1842,30 +1969,119 @@ async function run() {
         grandTotal,
       } = req.body;
 
+      console.log("Received Data:", req.body); // Log incoming data
+
+      // Field validation checks
+      if (
+        !invoiceId ||
+        !customerName ||
+        !Array.isArray(products) ||
+        products.length === 0
+      ) {
+        console.error("Validation Error: Missing required fields");
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+
       const order = {
         invoiceId,
-        date,
+        date: date || new Date(),
         pageName,
         customerName,
         phoneNumber,
         address,
         note,
+        consignmentId,
         products,
-        deliveryCost,
-        advance,
-        discount,
-        grandTotal,
-        status: "Pending",
+        deliveryCost: deliveryCost || 0,
+        advance: advance || 0,
+        discount: discount || 0,
+        grandTotal: grandTotal || 0,
+        status,
         createdAt: new Date(),
       };
 
+      console.log("Order to Insert:", order); // Log the order structure to be inserted
+
       try {
-        await ordersCollection.insertOne(order);
-        res.status(201).json({ message: "Order created successfully!" });
+        const insertResult = await ordersCollection.insertOne(order);
+        console.log("Insert Result:", insertResult); // Log the result of insertion
+        res.status(201).json({ message: "Exchange created successfully!" });
       } catch (error) {
-        res.status(500).json({ message: "Failed to create order", error });
+        console.error("Error creating exchange:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to create exchange order", error });
       }
     });
+
+    //************************************************************************************************************ */
+    app.get('/api/facebook-pages/last-code', async (req, res) => {
+      const name = req.query.name; // Extracts the name from the query
+      try {
+          const page = await facebookPagesCollection.findOne({ pageName: name }); // Searches by pageName
+          if (page) {
+              res.json({ lastCode: page.lastCode || "" });
+          } else {
+              res.status(404).json({ message: "Page not found" });
+          }
+      } catch (error) {
+          console.error("Error fetching lastCode:", error);
+          res.status(500).json({ message: "Server error" });
+      }
+  });
+    /**
+     * Order Routes
+     */
+
+    // 1. Create an order
+    app.post("/api/orders", async (req, res) => {
+      const {
+          invoiceId,
+          date,
+          pageName,
+          customerName,
+          phoneNumber,
+          address,
+          note,
+          products,
+          deliveryCost,
+          advance,
+          discount,
+          grandTotal
+      } = req.body;
+  
+      const order = {
+          invoiceId,
+          date: date || new Date(),
+          pageName,
+          customerName,
+          phoneNumber,
+          address,
+          note,
+          products,
+          deliveryCost: deliveryCost || 0,
+          advance: advance || 0,
+          discount: discount || 0,
+          grandTotal: grandTotal || 0,
+          createdAt: new Date()
+      };
+  
+      try {
+          // Insert order into OrderManagement
+          await ordersCollection.insertOne(order);
+  
+          // Update lastCode in FacebookPages
+          await facebookPagesCollection.updateOne(
+              { pageName: pageName },
+              { $set: { lastCode: invoiceId } }
+          );
+  
+          res.status(201).json({ message: "Order created and lastCode updated successfully!" });
+      } catch (error) {
+          console.error("Error creating order or updating lastCode:", error);
+          res.status(500).json({ message: "Failed to create order and update lastCode", error });
+      }
+  });
 
     // 2. Get all orders
     app.get("/api/orders", async (req, res) => {
