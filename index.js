@@ -53,71 +53,59 @@ async function run() {
 
 
 
-    // Function to update OrderManagement based on SteadFastPayment data
-async function updateOrderManagement() {
-  console.log("Running updateOrderManagement task...");
-
+    // Function to check and update OrderManagement collection
+const updateOrderManagement = async () => {
   try {
-      const steadFastPayments = await steadFastPaymentCollection.find({}).toArray();
-
+      // Fetch all entries from SteadFastPayment
+      const steadFastPayments = await steadFastPaymentCollection.find().toArray();
       for (const payment of steadFastPayments) {
-          const { invoice, status, codAmount, shippingCharge } = payment;
-
-          // Find corresponding order in OrderManagement with the matching invoice and status: Steadfast
-          const order = await ordersCollection.findOne({
-              invoiceId: invoice,
-              status: "Steadfast"
-          });
-
+          const { invoice, codAmount, shippingCharge, status } = payment;
+          // Find the matching order in OrderManagement by invoiceId and status: "Steadfast"
+          const order = await ordersCollection.findOne({ invoiceId: invoice, status: "Steadfast" });
           if (order) {
-              // Update order based on the status of the payment
-              const updateFields = {};
-
+              let updateFields = {};
               if (status === "Returned") {
-                  if (order.logisticStatus !== "Returned") {
-                      updateFields.logisticStatus = "Returned";
-                      updateFields.shippingCharge = shippingCharge;
+                  if (order.logisticStatus === "Returned") {
+                      updateFields = { shippingCharge: shippingCharge };
+                  } else {
+                      updateFields = { logisticStatus: "Parcel Due" };
                   }
               } else if (status === "Completed") {
-                  if (order.logisticStatus !== "Completed") {
-                      updateFields.logisticStatus = "Completed";
-                      updateFields.codAmount = codAmount;
-                      updateFields.shippingCharge = shippingCharge;
-                  }
+                  updateFields = {
+                      logisticStatus: "Completed",
+                      codAmount: codAmount,
+                      shippingCharge: shippingCharge,
+                  };
               } else if (status === "Partial") {
-                  if (order.logisticStatus !== "Partial") {
-                      updateFields.logisticStatus = "Partial";
-                      updateFields.codAmount = codAmount;
-                      updateFields.shippingCharge = shippingCharge;
+                  if (order.logisticStatus === "Partial") {
+                      updateFields = {
+                          codAmount: codAmount,
+                          shippingCharge: shippingCharge,
+                      };
+                  } else {
+                      updateFields = { logisticStatus: "Parcel Due" };
                   }
-              }else if (status === "Damage") {
-                if (order.logisticStatus !== "Damage") {
-                    updateFields.logisticStatus = "Damage";
-                    updateFields.codAmount = codAmount;
-                    updateFields.shippingCharge = shippingCharge;
-                }
-            }
-              
-
-              if (Object.keys(updateFields).length > 0) {
-                  await ordersCollection.updateOne(
-                      { _id: order._id },
-                      { $set: updateFields }
-                  );
-                  console.log(`Updated order ${invoice} with logisticStatus: ${updateFields.logisticStatus}`);
               }
+              // Update the order in OrderManagement
+              await ordersCollection.updateOne(
+                  { invoiceId: invoice },
+                  { $set: updateFields }
+              );
+              console.log(`Order ${invoice} updated successfully.`);
           } else {
-              console.log(`No matching order found for invoice: ${invoice}`);
+              console.log(`Order ${invoice} not found in OrderManagement.`);
           }
       }
   } catch (error) {
       console.error("Error updating OrderManagement:", error);
   }
-}
+};
 
-// Schedule the task to run every 4 hours
-cron.schedule('0 */4 * * *', updateOrderManagement);
-
+// Schedule the job to run every 4 hours
+cron.schedule('0 */4 * * *', () => {
+  console.log('Running scheduled task to update OrderManagement based on SteadFastPayment');
+  updateOrderManagement();
+});
 
 
      // Set up multer for file storage
@@ -1205,6 +1193,7 @@ app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
         res
           .status(200)
           .json({ message: "Logistic status updated successfully." });
+          updateOrderManagement();
       } catch (error) {
         console.error("Error updating logistic status:", error);
         res.status(500).json({ message: "Error updating logistic status." });
@@ -1345,8 +1334,11 @@ app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
         );
 
         if (result.modifiedCount > 0) {
+          updateOrderManagement();
           return res.status(200).json({
+            
             message: `Order logisticStatus updated to "${logisticStatus}" successfully!`,
+            
           });
         } else {
           return res
