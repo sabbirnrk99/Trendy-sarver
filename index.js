@@ -1,12 +1,11 @@
 const express = require("express");
 const cors = require("cors");
-const cron = require('node-cron');
+const cron = require("node-cron");
 const multer = require("multer");
 require("dotenv").config();
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const bodyParser = require("body-parser");
-const upload = multer({ dest: "uploads/" });
 const XLSX = require("xlsx");
 const port = process.env.PORT || 5000;
 
@@ -23,6 +22,8 @@ app.use(
 );
 app.use(express.json());
 app.use(bodyParser.json());
+// Set up multer for file storage
+const upload = multer({ dest: "uploads/" }); // 'uploads/' directory will store the files temporarily
 
 // MongoDB URI
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.camyj.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -50,20 +51,28 @@ async function run() {
     const redxAreaCollection = database.collection("RedxArea");
     const pathaowAreaCollection = database.collection("PathaowArea");
     const steadFastPaymentCollection = database.collection("SteadFastPayment");
+    const redxPaymentCollection = database.collection("RedxPayment");
 
 
 
-    // Function to check and update OrderManagement collection
-const updateOrderManagement = async () => {
+    // Function to check and update OrderManagement collection based on RedxPayment data
+const updateOrderManagementForRedx = async () => {
   try {
-      // Fetch all entries from SteadFastPayment
-      const steadFastPayments = await steadFastPaymentCollection.find().toArray();
-      for (const payment of steadFastPayments) {
+      // Fetch all entries from RedxPayment
+      const redxPayments = await redxPaymentCollection.find().toArray();
+
+      for (const payment of redxPayments) {
           const { invoice, codAmount, shippingCharge, status } = payment;
-          // Find the matching order in OrderManagement by invoiceId and status: "Steadfast"
-          const order = await ordersCollection.findOne({ invoiceId: invoice, status: "Steadfast" });
+
+          // Find the matching order in OrderManagement by invoiceId and status: "Redx"
+          const order = await ordersCollection.findOne({
+              invoiceId: invoice,
+              status: "Redx",
+          });
+
           if (order) {
               let updateFields = {};
+
               if (status === "Returned") {
                   if (order.logisticStatus === "Returned") {
                       updateFields = { shippingCharge: shippingCharge };
@@ -86,70 +95,176 @@ const updateOrderManagement = async () => {
                       updateFields = { logisticStatus: "Parcel Due" };
                   }
               }
+
               // Update the order in OrderManagement
               await ordersCollection.updateOne(
                   { invoiceId: invoice },
                   { $set: updateFields }
               );
-              console.log(`Order ${invoice} updated successfully.`);
+              console.log(`Order ${invoice} updated successfully for Redx.`);
           } else {
-              console.log(`Order ${invoice} not found in OrderManagement.`);
+              console.log(`Order ${invoice} not found in OrderManagement for Redx.`);
           }
       }
   } catch (error) {
-      console.error("Error updating OrderManagement:", error);
+      console.error("Error updating OrderManagement for Redx:", error);
   }
 };
 
 // Schedule the job to run every 4 hours
-cron.schedule('0 */4 * * *', () => {
-  console.log('Running scheduled task to update OrderManagement based on SteadFastPayment');
-  updateOrderManagement();
+cron.schedule("0 */4 * * *", () => {
+  console.log("Running scheduled task to update OrderManagement based on RedxPayment");
+  updateOrderManagementForRedx();
 });
 
+    app.post('/api/upload-redx', upload.single('file'), async (req, res) => {
+      if (!req.file) {
+          return res.status(400).json({ message: 'No file uploaded' });
+      }
+  
+      try {
+          // Read the Excel file
+          const workbook = XLSX.readFile(req.file.path);
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const data = XLSX.utils.sheet_to_json(worksheet);
+  
+          // Prepare data for MongoDB insertion
+          const processedData = data.map(row => ({
+              orderId: row["Order ID"] || '',
+              invoice: row.Invoice || '',
+              codAmount: parseFloat(row["COD Amount"] || 0),
+              shippingCharge: parseFloat(row["Shipping Charge"] || 0),
+              status: row.Status || ''
+          }));
+  
+          const database = client.db("Trendy_management");
+          const redxPaymentCollection = database.collection("RedxPayment");
+  
+          // Insert data into RedxPayment collection
+          const insertResult = await redxPaymentCollection.insertMany(processedData);
+  
+          res.status(200).json({
+              message: 'File uploaded and processed successfully!',
+              insertedCount: insertResult.insertedCount
+          });
+      } catch (error) {
+          console.error("Error processing file:", error);
+          res.status(500).json({ message: "Failed to process the file", error: error.message });
+      }
+  });
 
-     // Set up multer for file storage
-    const upload = multer({ dest: 'uploads/' }); // 'uploads/' directory will store the files temporarily
+
+
+
+    // Function to check and update OrderManagement collection
+    const updateOrderManagement = async () => {
+      try {
+        // Fetch all entries from SteadFastPayment
+        const steadFastPayments = await steadFastPaymentCollection
+          .find()
+          .toArray();
+        for (const payment of steadFastPayments) {
+          const { invoice, codAmount, shippingCharge, status } = payment;
+          // Find the matching order in OrderManagement by invoiceId and status: "Steadfast"
+          const order = await ordersCollection.findOne({
+            invoiceId: invoice,
+            status: "Steadfast",
+          });
+          if (order) {
+            let updateFields = {};
+            if (status === "Returned") {
+              if (order.logisticStatus === "Returned") {
+                updateFields = { shippingCharge: shippingCharge };
+              } else {
+                updateFields = { logisticStatus: "Parcel Due" };
+              }
+            } else if (status === "Completed") {
+              updateFields = {
+                logisticStatus: "Completed",
+                codAmount: codAmount,
+                shippingCharge: shippingCharge,
+              };
+            } else if (status === "Partial") {
+              if (order.logisticStatus === "Partial") {
+                updateFields = {
+                  codAmount: codAmount,
+                  shippingCharge: shippingCharge,
+                };
+              } else {
+                updateFields = { logisticStatus: "Parcel Due" };
+              }
+            }
+            // Update the order in OrderManagement
+            await ordersCollection.updateOne(
+              { invoiceId: invoice },
+              { $set: updateFields }
+            );
+            console.log(`Order ${invoice} updated successfully.`);
+          } else {
+            console.log(`Order ${invoice} not found in OrderManagement.`);
+          }
+        }
+      } catch (error) {
+        console.error("Error updating OrderManagement:", error);
+      }
+    };
+
+    // Schedule the job to run every 4 hours
+    cron.schedule("0 */4 * * *", () => {
+      console.log(
+        "Running scheduled task to update OrderManagement based on SteadFastPayment"
+      );
+      updateOrderManagement();
+    });
 
     // Endpoint to upload and process Excel file
-app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
-  if (!req.file) {
-      return res.status(400).json({ message: 'No file uploaded' });
-  }
+    app.post(
+      "/api/upload-steadfast",
+      upload.single("file"),
+      async (req, res) => {
+        if (!req.file) {
+          return res.status(400).json({ message: "No file uploaded" });
+        }
 
-  try {
-      // Read and parse the uploaded Excel file
-      const workbook = XLSX.readFile(req.file.path);
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const data = XLSX.utils.sheet_to_json(worksheet);
+        try {
+          // Read and parse the uploaded Excel file
+          const workbook = XLSX.readFile(req.file.path);
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const data = XLSX.utils.sheet_to_json(worksheet);
 
-      // Structure data according to MongoDB collection
-      const processedData = data.map(row => ({
-          consignmentId: row.ConsignmentId || '',
-          trackingCode: row["Tracking Code"] || '',
-          invoice: row.Invoice || '',
-          codAmount: row["COD Amount"] || 0,
-          shippingCharge: row["Shipping Charge"] || 0,
-          status: row.Status || '',
-      }));
+          // Structure data according to MongoDB collection
+          const processedData = data.map((row) => ({
+            consignmentId: row.ConsignmentId || "",
+            trackingCode: row["Tracking Code"] || "",
+            invoice: row.Invoice || "",
+            codAmount: row["COD Amount"] || 0,
+            shippingCharge: row["Shipping Charge"] || 0,
+            status: row.Status || "",
+          }));
 
-      // Insert data into the SteadFastPayment collection
-      const insertResult = await steadFastPaymentCollection.insertMany(processedData);
+          // Insert data into the SteadFastPayment collection
+          const insertResult = await steadFastPaymentCollection.insertMany(
+            processedData
+          );
 
-      // Send success response
-      res.status(200).json({
-          message: 'File uploaded and processed successfully!',
-          insertedCount: insertResult.insertedCount
-      });
-  } catch (error) {
-      console.error("Error processing file:", error);
-      res.status(500).json({ message: "Failed to process the file", error: error.message });
-  }
-});
-
-
-
+          // Send success response
+          res.status(200).json({
+            message: "File uploaded and processed successfully!",
+            insertedCount: insertResult.insertedCount,
+          });
+        } catch (error) {
+          console.error("Error processing file:", error);
+          res
+            .status(500)
+            .json({
+              message: "Failed to process the file",
+              error: error.message,
+            });
+        }
+      }
+    );
 
     // Bulk update order status to "Stock Out" by invoiceId
     app.post("/api/orders/bulk-update-status", async (req, res) => {
@@ -1193,7 +1308,8 @@ app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
         res
           .status(200)
           .json({ message: "Logistic status updated successfully." });
-          updateOrderManagement();
+        updateOrderManagement();
+        updateOrderManagementForRedx();
       } catch (error) {
         console.error("Error updating logistic status:", error);
         res.status(500).json({ message: "Error updating logistic status." });
@@ -1336,9 +1452,7 @@ app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
         if (result.modifiedCount > 0) {
           updateOrderManagement();
           return res.status(200).json({
-            
             message: `Order logisticStatus updated to "${logisticStatus}" successfully!`,
-            
           });
         } else {
           return res
@@ -2007,20 +2121,20 @@ app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
     });
 
     //************************************************************************************************************ */
-    app.get('/api/facebook-pages/last-code', async (req, res) => {
+    app.get("/api/facebook-pages/last-code", async (req, res) => {
       const name = req.query.name; // Extracts the name from the query
       try {
-          const page = await facebookPagesCollection.findOne({ pageName: name }); // Searches by pageName
-          if (page) {
-              res.json({ lastCode: page.lastCode || "" });
-          } else {
-              res.status(404).json({ message: "Page not found" });
-          }
+        const page = await facebookPagesCollection.findOne({ pageName: name }); // Searches by pageName
+        if (page) {
+          res.json({ lastCode: page.lastCode || "" });
+        } else {
+          res.status(404).json({ message: "Page not found" });
+        }
       } catch (error) {
-          console.error("Error fetching lastCode:", error);
-          res.status(500).json({ message: "Server error" });
+        console.error("Error fetching lastCode:", error);
+        res.status(500).json({ message: "Server error" });
       }
-  });
+    });
     /**
      * Order Routes
      */
@@ -2028,52 +2142,61 @@ app.post('/api/upload-steadfast', upload.single('file'), async (req, res) => {
     // 1. Create an order
     app.post("/api/orders", async (req, res) => {
       const {
-          invoiceId,
-          date,
-          pageName,
-          customerName,
-          phoneNumber,
-          address,
-          note,
-          products,
-          deliveryCost,
-          advance,
-          discount,
-          grandTotal
+        invoiceId,
+        date,
+        pageName,
+        customerName,
+        phoneNumber,
+        address,
+        note,
+        products,
+        deliveryCost,
+        advance,
+        discount,
+        grandTotal,
       } = req.body;
-  
+
       const order = {
-          invoiceId,
-          date: date || new Date(),
-          pageName,
-          customerName,
-          phoneNumber,
-          address,
-          note,
-          products,
-          deliveryCost: deliveryCost || 0,
-          advance: advance || 0,
-          discount: discount || 0,
-          grandTotal: grandTotal || 0,
-          createdAt: new Date()
+        invoiceId,
+        date: date || new Date(),
+        pageName,
+        customerName,
+        phoneNumber,
+        address,
+        note,
+        products,
+        deliveryCost: deliveryCost || 0,
+        advance: advance || 0,
+        discount: discount || 0,
+        grandTotal: grandTotal || 0,
+        createdAt: new Date(),
       };
-  
+
       try {
-          // Insert order into OrderManagement
-          await ordersCollection.insertOne(order);
-  
-          // Update lastCode in FacebookPages
-          await facebookPagesCollection.updateOne(
-              { pageName: pageName },
-              { $set: { lastCode: invoiceId } }
-          );
-  
-          res.status(201).json({ message: "Order created and lastCode updated successfully!" });
+        // Insert order into OrderManagement
+        await ordersCollection.insertOne(order);
+
+        // Update lastCode in FacebookPages
+        await facebookPagesCollection.updateOne(
+          { pageName: pageName },
+          { $set: { lastCode: invoiceId } }
+        );
+
+        res
+          .status(201)
+          .json({
+            message: "Order created and lastCode updated successfully!",
+          });
       } catch (error) {
-          console.error("Error creating order or updating lastCode:", error);
-          res.status(500).json({ message: "Failed to create order and update lastCode", error });
+        console.error("Error creating order or updating lastCode:", error);
+        res
+          .status(500)
+          .json({
+            message: "Failed to create order and update lastCode",
+            error,
+          });
       }
-  });
+    });
 
     // 2. Get all orders
     app.get("/api/orders", async (req, res) => {
