@@ -255,12 +255,74 @@ async function run() {
       }
     });
 
+    // // Fetch products with pagination and filters
+    // app.get("/api/products/pagination", async (req, res) => {
+    //   const { category, minPrice, maxPrice, page = 1, limit = 50 } = req.query;
+    //   const filters = {};
+
+    //   // Apply filters based on query parameters
+    //   if (category) filters["category"] = category;
+    //   if (minPrice || maxPrice) {
+    //     filters["parentcode.subproduct.selling_price"] = {
+    //       ...(minPrice ? { $gte: parseInt(minPrice) } : {}),
+    //       ...(maxPrice ? { $lte: parseInt(maxPrice) } : {}),
+    //     };
+    //   }
+
+    //   // Log filters and query parameters for debugging
+    //   console.log("Query Parameters:", {
+    //     category,
+    //     minPrice,
+    //     maxPrice,
+    //     page,
+    //     limit,
+    //   });
+    //   console.log("Filters Applied:", filters);
+
+    //   try {
+    //     const productCollection = client
+    //       .db("Trendy_management")
+    //       .collection("Product");
+
+    //     // Log message before fetching products
+    //     console.log("Fetching products with filters...");
+
+    //     const products = await productCollection
+    //       .find(filters)
+    //       .skip((page - 1) * parseInt(limit))
+    //       .limit(parseInt(limit))
+    //       .toArray();
+
+    //     const totalProducts = await productCollection.countDocuments(filters);
+    //     const totalPages = Math.ceil(totalProducts / limit);
+
+    //     // Log fetched products and pagination details
+    //     console.log("Fetched Products:", products.length);
+    //     console.log(
+    //       "Total Products:",
+    //       totalProducts,
+    //       "Total Pages:",
+    //       totalPages
+    //     );
+
+    //     res.json({ products, totalPages });
+    //   } catch (error) {
+    //     console.error("Error fetching products:", error);
+    //     res.status(500).json({ message: "Failed to fetch products" });
+    //   }
+    // });
+
     // Fetch products with pagination and filters
     app.get("/api/products/pagination", async (req, res) => {
       const { category, minPrice, maxPrice, page = 1, limit = 50 } = req.query;
       const filters = {};
 
-      if (category) filters["category"] = category;
+      // Apply category filter to the nested structure within `parentcode.subproduct.category`
+      if (category) {
+        filters["parentcode.subproduct.category"] = category;
+      }
+
+      // Apply price range filter
       if (minPrice || maxPrice) {
         filters["parentcode.subproduct.selling_price"] = {
           ...(minPrice ? { $gte: parseInt(minPrice) } : {}),
@@ -268,20 +330,44 @@ async function run() {
         };
       }
 
+      // Debugging logs
+      console.log("Query Parameters:", {
+        category,
+        minPrice,
+        maxPrice,
+        page,
+        limit,
+      });
+      console.log("Filters Applied:", filters);
+
       try {
         const productCollection = client
           .db("Trendy_management")
           .collection("Product");
 
+        // Log message before fetching products
+        console.log("Fetching products with filters...");
+
+        // Fetch products with pagination and applied filters
         const products = await productCollection
           .find(filters)
-          .skip((page - 1) * limit)
+          .skip((page - 1) * parseInt(limit))
           .limit(parseInt(limit))
           .toArray();
 
         const totalProducts = await productCollection.countDocuments(filters);
         const totalPages = Math.ceil(totalProducts / limit);
 
+        // Logging fetched data for debugging
+        console.log("Fetched Products Count:", products.length);
+        console.log(
+          "Total Products:",
+          totalProducts,
+          "Total Pages:",
+          totalPages
+        );
+
+        // Send the fetched data
         res.json({ products, totalPages });
       } catch (error) {
         console.error("Error fetching products:", error);
