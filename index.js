@@ -59,6 +59,25 @@ async function run() {
     const redxPaymentCollection = database.collection("RedxPayment");
     const categoryCollection = database.collection("Category");
 
+    // Add this route to your backend `index.js`
+    app.get("/api/category/:categoryName/products", async (req, res) => {
+      try {
+        const { categoryName } = req.params;
+        const limit = parseInt(req.query.limit) || 4;
+
+        // Query for products with the specified category
+        const products = await productCollection
+          .find({ "parentcode.subproduct.category": categoryName })
+          .limit(limit)
+          .toArray();
+
+        res.status(200).json({ products });
+      } catch (error) {
+        console.error("Error fetching products by category:", error);
+        res.status(500).json({ message: "Failed to fetch products" });
+      }
+    });
+
     // Get All Categories
     app.get("/api/categories", async (req, res) => {
       try {
@@ -225,7 +244,7 @@ async function run() {
     app.get("/api/products/filter", async (req, res) => {
       const {
         category,
-        minPrice = 0,
+        minPrice = 10,
         maxPrice = Infinity,
         page = 1,
         limit = 50,
