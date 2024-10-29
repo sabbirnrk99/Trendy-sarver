@@ -7,6 +7,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 const bodyParser = require("body-parser");
 const XLSX = require("xlsx");
+
 const port = process.env.PORT || 5000;
 
 // Middleware
@@ -14,6 +15,9 @@ app.use(
   cors({
     origin: [
       "http://localhost:5173",
+      "http://localhost:5174",
+
+      "http://localhost:3000/",
       "https://trendy-management.web.app",
       "https://trendy-management.firebaseapp.com",
     ],
@@ -52,132 +56,264 @@ async function run() {
     const pathaowAreaCollection = database.collection("PathaowArea");
     const steadFastPaymentCollection = database.collection("SteadFastPayment");
     const redxPaymentCollection = database.collection("RedxPayment");
+    const categoryCollection = database.collection("Category");
 
+    // Get All Categories
+    app.get("/api/categories", async (req, res) => {
+      try {
+        const categories = await categoryCollection.find().toArray();
+        res.status(200).json({ categories });
+      } catch (error) {
+        console.error("Error fetching categories:", error);
+        res.status(500).json({ message: "Failed to fetch categories", error });
+      }
+    });
 
+    // Delete Subcategory or Entire Parent Category
+    app.delete("/api/categories", async (req, res) => {
+      const { parentCategory, subCategory } = req.body;
+
+      try {
+        if (subCategory) {
+          // Remove the specific subcategory
+          const updateResult = await categoryCollection.updateOne(
+            { [parentCategory]: { $exists: true } },
+            { $pull: { [parentCategory]: subCategory } }
+          );
+
+          if (updateResult.modifiedCount === 0) {
+            return res.status(404).json({ message: "Subcategory not found" });
+          }
+          res.status(200).json({ message: "Subcategory deleted successfully" });
+        } else {
+          // Remove the entire parent category
+          const deleteResult = await categoryCollection.deleteOne({
+            [parentCategory]: { $exists: true },
+          });
+
+          if (deleteResult.deletedCount === 0) {
+            return res.status(404).json({ message: "Category not found" });
+          }
+          res.status(200).json({ message: "Category deleted successfully" });
+        }
+      } catch (error) {
+        console.error("Error deleting category:", error);
+        res.status(500).json({ message: "Failed to delete category", error });
+      }
+    });
+
+    // Add subcategory to an existing parent category
+    app.post("/api/categories/add-subcategory", async (req, res) => {
+      const { parentCategory, subCategory } = req.body;
+
+      if (!parentCategory || !subCategory) {
+        return res
+          .status(400)
+          .json({ message: "Parent category and subcategory are required" });
+      }
+
+      try {
+        // Update the parent category by pushing the new subcategory to the array
+        await database.collection("Category").updateOne(
+          { [parentCategory]: { $exists: true } },
+          { $addToSet: { [parentCategory]: subCategory } } // $addToSet prevents duplicates
+        );
+
+        res.status(200).json({ message: "Subcategory added successfully" });
+      } catch (error) {
+        console.error("Error adding subcategory:", error);
+        res.status(500).json({ message: "Failed to add subcategory" });
+      }
+    });
+
+    // Category collection route
+    app.post("/api/categories", async (req, res) => {
+      const { mainCategory } = req.body;
+
+      if (!mainCategory) {
+        return res.status(400).json({ message: "Main category is required" });
+      }
+
+      try {
+        const newCategory = { [mainCategory]: [] }; // Initialize with an empty array for potential subcategories later
+        await database.collection("Category").insertOne(newCategory);
+        res.status(201).json({ message: "Main category added successfully" });
+      } catch (error) {
+        console.error("Error adding category:", error);
+        res.status(500).json({ message: "Failed to add category" });
+      }
+    });
+
+    app.get("/api/categories", async (req, res) => {
+      try {
+        const categories = await categoryCollection.find().toArray();
+        res.status(200).json({ categories });
+      } catch (error) {
+        console.error("Error fetching categories:", error);
+        res.status(500).json({ message: "Failed to fetch categories", error });
+      }
+    });
+
+    // 1. Fetch product by slug
+    app.get("/api/product/:slug", async (req, res) => {
+      const { slug } = req.params;
+      try {
+        const product = await productCollection.findOne({
+          "parentcode.subproduct.slug": slug,
+        });
+
+        if (!product) {
+          return res.status(404).json({ message: "Product not found" });
+        }
+
+        // Find the specific subproduct with the matching slug
+        const subproduct = product.parentcode.subproduct.find(
+          (sub) => sub.slug === slug
+        );
+
+        if (!subproduct) {
+          return res.status(404).json({ message: "Subproduct not found" });
+        }
+
+        res.json({
+          ...subproduct,
+          category: product.category, // Add category for related products
+          parentProductName: product._id,
+        });
+      } catch (error) {
+        console.error("Error fetching product by slug:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // 2. Fetch related products by category (excluding the current product)
+    app.get("/api/category/products", async (req, res) => {
+      const { category, limit = 4, excludeSku } = req.query;
+
+      try {
+        const pipeline = [
+          {
+            $match: {
+              category,
+              "parentcode.subproduct.sku": { $ne: excludeSku },
+            },
+          },
+          {
+            $project: {
+              "parentcode.subproduct": {
+                $filter: {
+                  input: "$parentcode.subproduct",
+                  as: "sub",
+                  cond: { $ne: ["$$sub.sku", excludeSku] },
+                },
+              },
+            },
+          },
+          { $limit: parseInt(limit, 10) },
+        ];
+
+        const products = await productCollection.aggregate(pipeline).toArray();
+        res.json({ products });
+      } catch (error) {
+        console.error("Error fetching related products:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // 3. Fetch products with pagination and filter by price range and category
+    app.get("/api/products/filter", async (req, res) => {
+      const {
+        category,
+        minPrice = 0,
+        maxPrice = Infinity,
+        page = 1,
+        limit = 50,
+      } = req.query;
+
+      try {
+        const pipeline = [
+          {
+            $match: {
+              category,
+              "parentcode.subproduct.selling_price": {
+                $gte: parseInt(minPrice, 10),
+                $lte: parseInt(maxPrice, 10),
+              },
+            },
+          },
+          { $skip: (page - 1) * limit },
+          { $limit: parseInt(limit, 10) },
+        ];
+
+        const products = await productCollection.aggregate(pipeline).toArray();
+        const totalPages = Math.ceil(products.length / limit);
+
+        res.json({ products, totalPages });
+      } catch (error) {
+        console.error("Error fetching products:", error);
+        res.status(500).json({ message: "Server error" });
+      }
+    });
+
+    // Fetch products with pagination and filters
+    app.get("/api/products/pagination", async (req, res) => {
+      const { category, minPrice, maxPrice, page = 1, limit = 50 } = req.query;
+      const filters = {};
+
+      if (category) filters["category"] = category;
+      if (minPrice || maxPrice) {
+        filters["parentcode.subproduct.selling_price"] = {
+          ...(minPrice ? { $gte: parseInt(minPrice) } : {}),
+          ...(maxPrice ? { $lte: parseInt(maxPrice) } : {}),
+        };
+      }
+
+      try {
+        const productCollection = client
+          .db("Trendy_management")
+          .collection("Product");
+
+        const products = await productCollection
+          .find(filters)
+          .skip((page - 1) * limit)
+          .limit(parseInt(limit))
+          .toArray();
+
+        const totalProducts = await productCollection.countDocuments(filters);
+        const totalPages = Math.ceil(totalProducts / limit);
+
+        res.json({ products, totalPages });
+      } catch (error) {
+        console.error("Error fetching products:", error);
+        res.status(500).json({ message: "Failed to fetch products" });
+      }
+    });
 
     // Function to check and update OrderManagement collection based on RedxPayment data
-const updateOrderManagementForRedx = async () => {
-  try {
-      // Fetch all entries from RedxPayment
-      const redxPayments = await redxPaymentCollection.find().toArray();
+    const updateOrderManagementForRedx = async () => {
+      try {
+        // Fetch all entries from RedxPayment
+        const redxPayments = await redxPaymentCollection.find().toArray();
 
-      for (const payment of redxPayments) {
+        for (const payment of redxPayments) {
           const { invoice, codAmount, shippingCharge, status } = payment;
 
           // Find the matching order in OrderManagement by invoiceId and status: "Redx"
-          const order = await ordersCollection.findOne({
-              invoiceId: invoice,
-              status: "Redx",
-          });
-
-          if (order) {
-              let updateFields = {};
-
-              if (status === "Returned") {
-                  if (order.logisticStatus === "Returned") {
-                      updateFields = { shippingCharge: shippingCharge };
-                  } else {
-                      updateFields = { logisticStatus: "Parcel Due" };
-                  }
-              } else if (status === "Completed") {
-                  updateFields = {
-                      logisticStatus: "Completed",
-                      codAmount: codAmount,
-                      shippingCharge: shippingCharge,
-                  };
-              } else if (status === "Partial") {
-                  if (order.logisticStatus === "Partial") {
-                      updateFields = {
-                          codAmount: codAmount,
-                          shippingCharge: shippingCharge,
-                      };
-                  } else {
-                      updateFields = { logisticStatus: "Parcel Due" };
-                  }
-              }
-
-              // Update the order in OrderManagement
-              await ordersCollection.updateOne(
-                  { invoiceId: invoice },
-                  { $set: updateFields }
-              );
-              console.log(`Order ${invoice} updated successfully for Redx.`);
-          } else {
-              console.log(`Order ${invoice} not found in OrderManagement for Redx.`);
-          }
-      }
-  } catch (error) {
-      console.error("Error updating OrderManagement for Redx:", error);
-  }
-};
-
-// Schedule the job to run every 4 hours
-cron.schedule("0 */4 * * *", () => {
-  console.log("Running scheduled task to update OrderManagement based on RedxPayment");
-  updateOrderManagementForRedx();
-});
-
-    app.post('/api/upload-redx', upload.single('file'), async (req, res) => {
-      if (!req.file) {
-          return res.status(400).json({ message: 'No file uploaded' });
-      }
-  
-      try {
-          // Read the Excel file
-          const workbook = XLSX.readFile(req.file.path);
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          const data = XLSX.utils.sheet_to_json(worksheet);
-  
-          // Prepare data for MongoDB insertion
-          const processedData = data.map(row => ({
-              orderId: row["Order ID"] || '',
-              invoice: row.Invoice || '',
-              codAmount: parseFloat(row["COD Amount"] || 0),
-              shippingCharge: parseFloat(row["Shipping Charge"] || 0),
-              status: row.Status || ''
-          }));
-  
-          const database = client.db("Trendy_management");
-          const redxPaymentCollection = database.collection("RedxPayment");
-  
-          // Insert data into RedxPayment collection
-          const insertResult = await redxPaymentCollection.insertMany(processedData);
-  
-          res.status(200).json({
-              message: 'File uploaded and processed successfully!',
-              insertedCount: insertResult.insertedCount
-          });
-      } catch (error) {
-          console.error("Error processing file:", error);
-          res.status(500).json({ message: "Failed to process the file", error: error.message });
-      }
-  });
-
-
-
-
-    // Function to check and update OrderManagement collection
-    const updateOrderManagement = async () => {
-      try {
-        // Fetch all entries from SteadFastPayment
-        const steadFastPayments = await steadFastPaymentCollection
-          .find()
-          .toArray();
-        for (const payment of steadFastPayments) {
-          const { invoice, codAmount, shippingCharge, status } = payment;
-          // Find the matching order in OrderManagement by invoiceId and status: "Steadfast"
+          // Exclude orders with consignmentStatus: "Parcel Due"
           const order = await ordersCollection.findOne({
             invoiceId: invoice,
-            status: "Steadfast",
+            status: "Redx",
+            consignmentStatus: { $ne: "Parcel Due" },
           });
+
           if (order) {
             let updateFields = {};
+
             if (status === "Returned") {
               if (order.logisticStatus === "Returned") {
                 updateFields = { shippingCharge: shippingCharge };
               } else {
-                updateFields = { logisticStatus: "Parcel Due" };
+                updateFields = { consignmentStatus: "Parcel Due" };
               }
             } else if (status === "Completed") {
               updateFields = {
@@ -192,9 +328,122 @@ cron.schedule("0 */4 * * *", () => {
                   shippingCharge: shippingCharge,
                 };
               } else {
-                updateFields = { logisticStatus: "Parcel Due" };
+                updateFields = { consignmentStatus: "Parcel Due" };
               }
             }
+
+            // Update the order in OrderManagement
+            await ordersCollection.updateOne(
+              { invoiceId: invoice },
+              { $set: updateFields }
+            );
+            console.log(`Order ${invoice} updated successfully for Redx.`);
+          } else {
+            console.log(
+              `Order ${invoice} not found in OrderManagement for Redx.`
+            );
+          }
+        }
+      } catch (error) {
+        console.error("Error updating OrderManagement for Redx:", error);
+      }
+    };
+
+    // Schedule the job to run every 4 hours
+    cron.schedule("0 */4 * * *", () => {
+      console.log(
+        "Running scheduled task to update OrderManagement based on RedxPayment"
+      );
+      updateOrderManagementForRedx();
+    });
+
+    app.post("/api/upload-redx", upload.single("file"), async (req, res) => {
+      if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+      }
+
+      try {
+        // Read the Excel file
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(worksheet);
+
+        // Prepare data for MongoDB insertion
+        const processedData = data.map((row) => ({
+          orderId: row["Order ID"] || "",
+          invoice: row.Invoice || "",
+          codAmount: parseFloat(row["COD Amount"] || 0),
+          shippingCharge: parseFloat(row["Shipping Charge"] || 0),
+          status: row.Status || "",
+        }));
+
+        const database = client.db("Trendy_management");
+        const redxPaymentCollection = database.collection("RedxPayment");
+
+        // Insert data into RedxPayment collection
+        const insertResult = await redxPaymentCollection.insertMany(
+          processedData
+        );
+
+        res.status(200).json({
+          message: "File uploaded and processed successfully!",
+          insertedCount: insertResult.insertedCount,
+        });
+      } catch (error) {
+        console.error("Error processing file:", error);
+        res.status(500).json({
+          message: "Failed to process the file",
+          error: error.message,
+        });
+      }
+    });
+
+    // Function to check and update OrderManagement collection
+    const updateOrderManagement = async () => {
+      try {
+        // Fetch all entries from SteadFastPayment
+        const steadFastPayments = await steadFastPaymentCollection
+          .find()
+          .toArray();
+
+        for (const payment of steadFastPayments) {
+          const { invoice, codAmount, shippingCharge, status } = payment;
+
+          // Find the matching order in OrderManagement by invoiceId and status: "Steadfast"
+          // Exclude orders with consignmentStatus: "Parcel Due"
+          const order = await ordersCollection.findOne({
+            invoiceId: invoice,
+            status: "Steadfast",
+            consignmentStatus: { $ne: "Parcel Due" },
+          });
+
+          if (order) {
+            let updateFields = {};
+
+            if (status === "Returned") {
+              if (order.logisticStatus === "Returned") {
+                updateFields = { shippingCharge: shippingCharge };
+              } else {
+                updateFields = { consignmentStatus: "Parcel Due" };
+              }
+            } else if (status === "Completed") {
+              updateFields = {
+                logisticStatus: "Completed",
+                codAmount: codAmount,
+                shippingCharge: shippingCharge,
+              };
+            } else if (status === "Partial") {
+              if (order.logisticStatus === "Partial") {
+                updateFields = {
+                  codAmount: codAmount,
+                  shippingCharge: shippingCharge,
+                };
+              } else {
+                updateFields = { consignmentStatus: "Parcel Due" };
+              }
+            }
+
             // Update the order in OrderManagement
             await ordersCollection.updateOne(
               { invoiceId: invoice },
@@ -256,12 +505,10 @@ cron.schedule("0 */4 * * *", () => {
           });
         } catch (error) {
           console.error("Error processing file:", error);
-          res
-            .status(500)
-            .json({
-              message: "Failed to process the file",
-              error: error.message,
-            });
+          res.status(500).json({
+            message: "Failed to process the file",
+            error: error.message,
+          });
         }
       }
     );
@@ -2182,19 +2429,15 @@ cron.schedule("0 */4 * * *", () => {
           { $set: { lastCode: invoiceId } }
         );
 
-        res
-          .status(201)
-          .json({
-            message: "Order created and lastCode updated successfully!",
-          });
+        res.status(201).json({
+          message: "Order created and lastCode updated successfully!",
+        });
       } catch (error) {
         console.error("Error creating order or updating lastCode:", error);
-        res
-          .status(500)
-          .json({
-            message: "Failed to create order and update lastCode",
-            error,
-          });
+        res.status(500).json({
+          message: "Failed to create order and update lastCode",
+          error,
+        });
       }
     });
 
