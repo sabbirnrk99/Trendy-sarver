@@ -59,6 +59,46 @@ async function run() {
     const redxPaymentCollection = database.collection("RedxPayment");
     const categoryCollection = database.collection("Category");
 
+
+    // API Route to get products by subcategory name
+app.get('/api/products/subcategory/:subcategory', async (req, res) => {
+  const { subcategory } = req.params; // e.g., "Laptops"
+  try {
+      const products = await productCollection.find({
+          "parentcode.subproduct.subcategory": subcategory
+      }).toArray();
+
+      // Filter subproducts matching the specified subcategory
+      const filteredProducts = products.map(product => ({
+          ...product,
+          subproduct: product.parentcode.subproduct.filter(sub => sub.subcategory === subcategory)
+      })).filter(p => p.subproduct.length > 0); // Only include products with matching subproducts
+
+      res.json({ products: filteredProducts });
+  } catch (error) {
+      console.error("Error fetching products by subcategory:", error);
+      res.status(500).json({ message: "Failed to fetch products by subcategory" });
+  }
+});
+    
+
+
+    app.get("/api/products/category/:categoryName", async (req, res) => {
+      const { categoryName } = req.params;
+      try {
+          // Find products that have the specified category name
+          const products = await productCollection.find({ "parentcode.subproduct.category": categoryName }).toArray();
+          
+          res.json({ products });
+      } catch (error) {
+          console.error("Error fetching products by category:", error);
+          res.status(500).json({ message: "Failed to fetch products by category" });
+      }
+  });
+  
+
+    
+
     // Add this route to your backend `index.js`
     app.get("/api/category/:categoryName/products", async (req, res) => {
       try {
@@ -78,14 +118,17 @@ async function run() {
       }
     });
 
-    // Get All Categories
-    app.get("/api/categories", async (req, res) => {
+    // Fetch detailed category information, including subcategories
+    app.get("/api/categories/details", async (req, res) => {
       try {
-        const categories = await categoryCollection.find().toArray();
+        const categories = await database
+          .collection("Category")
+          .find({})
+          .toArray();
         res.status(200).json({ categories });
       } catch (error) {
         console.error("Error fetching categories:", error);
-        res.status(500).json({ message: "Failed to fetch categories", error });
+        res.status(500).json({ message: "Failed to fetch categories" });
       }
     });
 
@@ -122,24 +165,34 @@ async function run() {
       }
     });
 
-    // Add subcategory to an existing parent category
+    // Add subcategory to a parent category
     app.post("/api/categories/add-subcategory", async (req, res) => {
-      const { parentCategory, subCategory } = req.body;
+      const { parentCategory, subCategory, subCategorySlug } = req.body;
 
-      if (!parentCategory || !subCategory) {
-        return res
-          .status(400)
-          .json({ message: "Parent category and subcategory are required" });
+      if (!parentCategory || !subCategory || !subCategorySlug) {
+        return res.status(400).json({
+          message: "Parent category, subcategory, and slug are required",
+        });
       }
 
       try {
-        // Update the parent category by pushing the new subcategory to the array
-        await database.collection("Category").updateOne(
-          { [parentCategory]: { $exists: true } },
-          { $addToSet: { [parentCategory]: subCategory } } // $addToSet prevents duplicates
+        const result = await database.collection("Category").updateOne(
+          { mainCategory: parentCategory },
+          {
+            $push: {
+              subcategories: {
+                name: subCategory,
+                slug: subCategorySlug,
+              },
+            },
+          }
         );
 
-        res.status(200).json({ message: "Subcategory added successfully" });
+        if (result.matchedCount === 0) {
+          return res.status(404).json({ message: "Parent category not found" });
+        }
+
+        res.status(201).json({ message: "Subcategory added successfully" });
       } catch (error) {
         console.error("Error adding subcategory:", error);
         res.status(500).json({ message: "Failed to add subcategory" });
@@ -148,14 +201,21 @@ async function run() {
 
     // Category collection route
     app.post("/api/categories", async (req, res) => {
-      const { mainCategory } = req.body;
+      const { mainCategory, mainCategorySlug } = req.body;
 
-      if (!mainCategory) {
-        return res.status(400).json({ message: "Main category is required" });
+      if (!mainCategory || !mainCategorySlug) {
+        return res
+          .status(400)
+          .json({ message: "Main category and slug are required" });
       }
 
       try {
-        const newCategory = { [mainCategory]: [] }; // Initialize with an empty array for potential subcategories later
+        const newCategory = {
+          mainCategory,
+          mainCategorySlug,
+          subcategories: [], // Initialize with an empty array for potential subcategories later
+        };
+
         await database.collection("Category").insertOne(newCategory);
         res.status(201).json({ message: "Main category added successfully" });
       } catch (error) {
@@ -164,13 +224,51 @@ async function run() {
       }
     });
 
+    app.get("/api/categories/main", async (req, res) => {
+      try {
+        // Fetch main categories with proper structure
+        const categories = await categoryCollection
+          .find({}, { projection: { mainCategory: 1, mainCategorySlug: 1 } })
+          .toArray();
+
+        // Format categories to include mainCategory and mainCategorySlug correctly
+        const formattedCategories = categories.map((category) => ({
+          _id: category._id,
+          name: category.mainCategory, // map mainCategory as name
+          slug: category.mainCategorySlug || "", // handle missing slug if any
+        }));
+
+        res.status(200).json({ categories: formattedCategories });
+      } catch (error) {
+        console.error("Error fetching main categories:", error);
+        res.status(500).json({ message: "Failed to fetch main categories" });
+      }
+    });
+
+    // Endpoint to get categories with subcategories
     app.get("/api/categories", async (req, res) => {
       try {
-        const categories = await categoryCollection.find().toArray();
-        res.status(200).json({ categories });
+        const categories = await database
+          .collection("Category")
+          .find()
+          .toArray();
+        // Ensure each category’s subcategories are in array format
+        const formattedCategories = categories.map((category) => {
+          const mainCategoryName = Object.keys(category).find(
+            (key) => key !== "_id"
+          );
+          return {
+            _id: category._id,
+            name: mainCategoryName,
+            subcategories: Array.isArray(category[mainCategoryName])
+              ? category[mainCategoryName]
+              : [],
+          };
+        });
+        res.json({ categories: formattedCategories });
       } catch (error) {
         console.error("Error fetching categories:", error);
-        res.status(500).json({ message: "Failed to fetch categories", error });
+        res.status(500).json({ message: "Failed to fetch categories" });
       }
     });
 
@@ -2506,6 +2604,7 @@ async function run() {
         deliveryCost,
         advance,
         discount,
+        status,
         grandTotal,
       } = req.body;
 
@@ -2518,6 +2617,7 @@ async function run() {
         address,
         note,
         products,
+        status,
         deliveryCost: deliveryCost || 0,
         advance: advance || 0,
         discount: discount || 0,
