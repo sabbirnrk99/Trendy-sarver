@@ -17,6 +17,7 @@ app.use(
       "http://localhost:5173",
       "http://localhost:5174",
       "https://glamersbd.web.app",
+      "https://glameersbd.com",
 
       "http://localhost:3000/",
       "https://trendy-management.web.app",
