@@ -63,78 +63,93 @@ async function run() {
     const redxPaymentCollection = database.collection("RedxPayment");
     const categoryCollection = database.collection("Category");
 
-
     // API Route to get products by subcategory name
-app.get('/api/products/subcategory/:subcategory', async (req, res) => {
-  const { subcategory } = req.params; // e.g., "Laptops"
-  try {
-      const products = await productCollection.find({
-          "parentcode.subproduct.subcategory": subcategory
-      }).toArray();
+    app.get("/api/products/subcategory/:subcategory", async (req, res) => {
+      const { subcategory } = req.params; // e.g., "Laptops"
+      try {
+        const products = await productCollection
+          .find({
+            "parentcode.subproduct": {
+              $elemMatch: {
+                subcategory: subcategory, // Filter by subcategory
+                status: "Website", // Filter by status
+              },
+            },
+          })
+          .toArray();
 
-      // Filter subproducts matching the specified subcategory
-      const filteredProducts = products.map(product => ({
-          ...product,
-          subproduct: product.parentcode.subproduct.filter(sub => sub.subcategory === subcategory)
-      })).filter(p => p.subproduct.length > 0); // Only include products with matching subproducts
+        // Filter subproducts matching the specified subcategory and status
+        const filteredProducts = products
+          .map((product) => ({
+            ...product,
+            subproduct: product.parentcode.subproduct.filter(
+              (sub) =>
+                sub.subcategory === subcategory && sub.status === "Website"
+            ),
+          }))
+          .filter((p) => p.subproduct.length > 0); // Only include products with matching subproducts
 
-      res.json({ products: filteredProducts });
-  } catch (error) {
-      console.error("Error fetching products by subcategory:", error);
-      res.status(500).json({ message: "Failed to fetch products by subcategory" });
-  }
-});
-    
-
+        res.json({ products: filteredProducts });
+      } catch (error) {
+        console.error("Error fetching products by subcategory:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to fetch products by subcategory" });
+      }
+    });
 
     app.get("/api/products/category/:categoryName", async (req, res) => {
       const { categoryName } = req.params;
       try {
-          // Find products that have the specified category name
-          const products = await productCollection.find({ "parentcode.subproduct.category": categoryName }).toArray();
-          
-          res.json({ products });
-      } catch (error) {
-          console.error("Error fetching products by category:", error);
-          res.status(500).json({ message: "Failed to fetch products by category" });
-      }
-  });
-  
+        // Find products that have the specified category name
+        const products = await productCollection
+          .find({ "parentcode.subproduct.category": categoryName })
+          .toArray();
 
-    
+        res.json({ products });
+      } catch (error) {
+        console.error("Error fetching products by category:", error);
+        res
+          .status(500)
+          .json({ message: "Failed to fetch products by category" });
+      }
+    });
 
     // Add this route to your backend `index.js`
     app.get("/api/category/:categoryName/products", async (req, res) => {
       try {
-          const { categoryName } = req.params;
-          const limit = parseInt(req.query.limit) || 4;
-  
-          // Query for products with the specified category and status "Website"
-          const products = await productCollection
-              .find({
-                  "parentcode.subproduct.category": categoryName,
-                  "parentcode.subproduct.status": "Website"
-              })
-              .limit(limit)
-              .toArray();
-  
-          // Filter the subproducts by the category name and status
-          const filteredProducts = products.map(product => ({
-              ...product,
-              parentcode: {
-                  ...product.parentcode,
-                  subproduct: product.parentcode.subproduct.filter(
-                      sub => sub.category === categoryName && sub.status === "Website"
-                  )
-              }
-          })).filter(p => p.parentcode.subproduct.length > 0);
-  
-          res.status(200).json({ products: filteredProducts });
+        const { categoryName } = req.params;
+        const limit = parseInt(req.query.limit) || 4;
+
+        // Query for products with the specified category and status "Website"
+        const products = await productCollection
+          .find({
+            "parentcode.subproduct.category": categoryName,
+            "parentcode.subproduct.status": "Website",
+          })
+          .limit(limit)
+          .toArray();
+
+        // Filter the subproducts by the category name and status
+        const filteredProducts = products
+          .map((product) => ({
+            ...product,
+            parentcode: {
+              ...product.parentcode,
+              subproduct: product.parentcode.subproduct.filter(
+                (sub) =>
+                  sub.category === categoryName && sub.status === "Website"
+              ),
+            },
+          }))
+          .filter((p) => p.parentcode.subproduct.length > 0);
+
+        res.status(200).json({ products: filteredProducts });
       } catch (error) {
-          console.error("Error fetching products by category:", error);
-          res.status(500).json({ message: "Failed to fetch products" });
+        console.error("Error fetching products by category:", error);
+        res.status(500).json({ message: "Failed to fetch products" });
       }
-  });
+    });
 
     // Fetch detailed category information, including subcategories
     app.get("/api/categories/details", async (req, res) => {
@@ -150,38 +165,40 @@ app.get('/api/products/subcategory/:subcategory', async (req, res) => {
       }
     });
 
-    // Delete Subcategory or Entire Parent Category
-    app.delete("/api/categories", async (req, res) => {
-      const { parentCategory, subCategory } = req.body;
+    
 
-      try {
-        if (subCategory) {
-          // Remove the specific subcategory
-          const updateResult = await categoryCollection.updateOne(
-            { [parentCategory]: { $exists: true } },
-            { $pull: { [parentCategory]: subCategory } }
-          );
+// Delete Subcategory or Entire Parent Category
+app.delete("/api/categories", async (req, res) => {
+  const { parentCategoryId, subCategorySlug } = req.body;
 
-          if (updateResult.modifiedCount === 0) {
-            return res.status(404).json({ message: "Subcategory not found" });
-          }
-          res.status(200).json({ message: "Subcategory deleted successfully" });
-        } else {
-          // Remove the entire parent category
-          const deleteResult = await categoryCollection.deleteOne({
-            [parentCategory]: { $exists: true },
-          });
+  try {
+    if (subCategorySlug) {
+      // Remove the specific subcategory by its slug
+      const updateResult = await categoryCollection.updateOne(
+        { _id: new ObjectId(parentCategoryId) },
+        { $pull: { subcategories: { slug: subCategorySlug } } }
+      );
 
-          if (deleteResult.deletedCount === 0) {
-            return res.status(404).json({ message: "Category not found" });
-          }
-          res.status(200).json({ message: "Category deleted successfully" });
-        }
-      } catch (error) {
-        console.error("Error deleting category:", error);
-        res.status(500).json({ message: "Failed to delete category", error });
+      if (updateResult.modifiedCount === 0) {
+        return res.status(404).json({ message: "Subcategory not found" });
       }
-    });
+      res.status(200).json({ message: "Subcategory deleted successfully" });
+    } else {
+      // Remove the entire parent category using its _id
+      const deleteResult = await categoryCollection.deleteOne({
+        _id: new ObjectId(parentCategoryId),
+      });
+
+      if (deleteResult.deletedCount === 0) {
+        return res.status(404).json({ message: "Category not found" });
+      }
+      res.status(200).json({ message: "Category deleted successfully" });
+    }
+  } catch (error) {
+    console.error("Error deleting category:", error);
+    res.status(500).json({ message: "Failed to delete category", error });
+  }
+});
 
     // Add subcategory to a parent category
     app.post("/api/categories/add-subcategory", async (req, res) => {
@@ -449,70 +466,69 @@ app.get('/api/products/subcategory/:subcategory', async (req, res) => {
     // });
 
     // Fetch products with pagination and filters
-    app.get("/api/products/pagination", async (req, res) => { 
+    // Fetch products with pagination and filters
+    app.get("/api/products/pagination", async (req, res) => {
       const { category, minPrice, maxPrice, page = 1, limit = 50 } = req.query;
       const filters = {};
-  
+
       // Apply category filter to the nested structure within `parentcode.subproduct.category`
       if (category) {
-          filters["parentcode.subproduct.category"] = category;
+        filters["parentcode.subproduct.category"] = category;
       }
-  
+
       // Apply status filter to ensure only products with `status: "Website"`
       filters["parentcode.subproduct.status"] = "Website";
-  
-      // Apply price range filter
-      if (minPrice || maxPrice) {
-          filters["parentcode.subproduct.selling_price"] = {
-              ...(minPrice ? { $gte: parseInt(minPrice) } : {}),
-              ...(maxPrice ? { $lte: parseInt(maxPrice) } : {}),
-          };
-      }
-  
+
+      // Apply price range filter and ensure selling_price is greater than 1
+      filters["parentcode.subproduct.selling_price"] = {
+        ...(minPrice ? { $gte: parseInt(minPrice) } : { $gt: 1 }),
+        ...(maxPrice ? { $lte: parseInt(maxPrice) } : {}),
+      };
+
       // Debugging logs
       console.log("Query Parameters:", {
-          category,
-          minPrice,
-          maxPrice,
-          page,
-          limit,
+        category,
+        minPrice,
+        maxPrice,
+        page,
+        limit,
       });
       console.log("Filters Applied:", filters);
-  
+
       try {
-          const productCollection = client
-              .db("Trendy_management")
-              .collection("Product");
-  
-          // Log message before fetching products
-          console.log("Fetching products with filters...");
-  
-          // Fetch products with pagination and applied filters
-          const products = await productCollection
-              .find(filters)
-              .skip((page - 1) * parseInt(limit))
-              .limit(parseInt(limit))
-              .toArray();
-  
-          const totalProducts = await productCollection.countDocuments(filters);
-          const totalPages = Math.ceil(totalProducts / limit);
-  
-          // Logging fetched data for debugging
-          console.log("Fetched Products Count:", products.length);
-          console.log(
-              "Total Products:",
-              totalProducts,
-              "Total Pages:",
-              totalPages
-          );
-  
-          // Send the fetched data
-          res.json({ products, totalPages });
+        const productCollection = client
+          .db("Trendy_management")
+          .collection("Product");
+
+        // Log message before fetching products
+        console.log("Fetching products with filters...");
+
+        // Fetch products with pagination and applied filters
+        const products = await productCollection
+          .find(filters)
+          .skip((page - 1) * parseInt(limit))
+          .limit(parseInt(limit))
+          .toArray();
+
+        const totalProducts = await productCollection.countDocuments(filters);
+        const totalPages = Math.ceil(totalProducts / limit);
+
+        // Logging fetched data for debugging
+        console.log("Fetched Products Count:", products.length);
+        console.log(
+          "Total Products:",
+          totalProducts,
+          "Total Pages:",
+          totalPages
+        );
+
+        // Send the fetched data
+        res.json({ products, totalPages });
       } catch (error) {
-          console.error("Error fetching products:", error);
-          res.status(500).json({ message: "Failed to fetch products" });
+        console.error("Error fetching products:", error);
+        res.status(500).json({ message: "Failed to fetch products" });
       }
-  });
+    });
 
     // Function to check and update OrderManagement collection based on RedxPayment data
     const updateOrderManagementForRedx = async () => {
