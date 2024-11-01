@@ -103,21 +103,35 @@ app.get('/api/products/subcategory/:subcategory', async (req, res) => {
     // Add this route to your backend `index.js`
     app.get("/api/category/:categoryName/products", async (req, res) => {
       try {
-        const { categoryName } = req.params;
-        const limit = parseInt(req.query.limit) || 4;
-
-        // Query for products with the specified category
-        const products = await productCollection
-          .find({ "parentcode.subproduct.category": categoryName })
-          .limit(limit)
-          .toArray();
-
-        res.status(200).json({ products });
+          const { categoryName } = req.params;
+          const limit = parseInt(req.query.limit) || 4;
+  
+          // Query for products with the specified category and status "Website"
+          const products = await productCollection
+              .find({
+                  "parentcode.subproduct.category": categoryName,
+                  "parentcode.subproduct.status": "Website"
+              })
+              .limit(limit)
+              .toArray();
+  
+          // Filter the subproducts by the category name and status
+          const filteredProducts = products.map(product => ({
+              ...product,
+              parentcode: {
+                  ...product.parentcode,
+                  subproduct: product.parentcode.subproduct.filter(
+                      sub => sub.category === categoryName && sub.status === "Website"
+                  )
+              }
+          })).filter(p => p.parentcode.subproduct.length > 0);
+  
+          res.status(200).json({ products: filteredProducts });
       } catch (error) {
-        console.error("Error fetching products by category:", error);
-        res.status(500).json({ message: "Failed to fetch products" });
+          console.error("Error fetching products by category:", error);
+          res.status(500).json({ message: "Failed to fetch products" });
       }
-    });
+  });
 
     // Fetch detailed category information, including subcategories
     app.get("/api/categories/details", async (req, res) => {
@@ -432,67 +446,70 @@ app.get('/api/products/subcategory/:subcategory', async (req, res) => {
     // });
 
     // Fetch products with pagination and filters
-    app.get("/api/products/pagination", async (req, res) => {
+    app.get("/api/products/pagination", async (req, res) => { 
       const { category, minPrice, maxPrice, page = 1, limit = 50 } = req.query;
       const filters = {};
-
+  
       // Apply category filter to the nested structure within `parentcode.subproduct.category`
       if (category) {
-        filters["parentcode.subproduct.category"] = category;
+          filters["parentcode.subproduct.category"] = category;
       }
-
+  
+      // Apply status filter to ensure only products with `status: "Website"`
+      filters["parentcode.subproduct.status"] = "Website";
+  
       // Apply price range filter
       if (minPrice || maxPrice) {
-        filters["parentcode.subproduct.selling_price"] = {
-          ...(minPrice ? { $gte: parseInt(minPrice) } : {}),
-          ...(maxPrice ? { $lte: parseInt(maxPrice) } : {}),
-        };
+          filters["parentcode.subproduct.selling_price"] = {
+              ...(minPrice ? { $gte: parseInt(minPrice) } : {}),
+              ...(maxPrice ? { $lte: parseInt(maxPrice) } : {}),
+          };
       }
-
+  
       // Debugging logs
       console.log("Query Parameters:", {
-        category,
-        minPrice,
-        maxPrice,
-        page,
-        limit,
+          category,
+          minPrice,
+          maxPrice,
+          page,
+          limit,
       });
       console.log("Filters Applied:", filters);
-
+  
       try {
-        const productCollection = client
-          .db("Trendy_management")
-          .collection("Product");
-
-        // Log message before fetching products
-        console.log("Fetching products with filters...");
-
-        // Fetch products with pagination and applied filters
-        const products = await productCollection
-          .find(filters)
-          .skip((page - 1) * parseInt(limit))
-          .limit(parseInt(limit))
-          .toArray();
-
-        const totalProducts = await productCollection.countDocuments(filters);
-        const totalPages = Math.ceil(totalProducts / limit);
-
-        // Logging fetched data for debugging
-        console.log("Fetched Products Count:", products.length);
-        console.log(
-          "Total Products:",
-          totalProducts,
-          "Total Pages:",
-          totalPages
-        );
-
-        // Send the fetched data
-        res.json({ products, totalPages });
+          const productCollection = client
+              .db("Trendy_management")
+              .collection("Product");
+  
+          // Log message before fetching products
+          console.log("Fetching products with filters...");
+  
+          // Fetch products with pagination and applied filters
+          const products = await productCollection
+              .find(filters)
+              .skip((page - 1) * parseInt(limit))
+              .limit(parseInt(limit))
+              .toArray();
+  
+          const totalProducts = await productCollection.countDocuments(filters);
+          const totalPages = Math.ceil(totalProducts / limit);
+  
+          // Logging fetched data for debugging
+          console.log("Fetched Products Count:", products.length);
+          console.log(
+              "Total Products:",
+              totalProducts,
+              "Total Pages:",
+              totalPages
+          );
+  
+          // Send the fetched data
+          res.json({ products, totalPages });
       } catch (error) {
-        console.error("Error fetching products:", error);
-        res.status(500).json({ message: "Failed to fetch products" });
+          console.error("Error fetching products:", error);
+          res.status(500).json({ message: "Failed to fetch products" });
       }
-    });
+  });
 
     // Function to check and update OrderManagement collection based on RedxPayment data
     const updateOrderManagementForRedx = async () => {
