@@ -20,8 +20,8 @@ app.use(
       "http://localhost:5176",
       "https://glamersbd.web.app",
       "https://glameersbd.com",
-      "https://gloss-clint.web.app/",
-      "https://glossandglows.com/",
+      "https://gloss-clint.web.app",
+      "https://glossandglows.com",
 
       "http://localhost:3000/",
       "https://trendy-management.web.app",
