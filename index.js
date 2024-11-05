@@ -479,7 +479,7 @@ app.get("/api/category/products", async (req, res) => {
     // Fetch products with pagination and filters
     // Fetch products with pagination and filters
     app.get("/api/products/pagination", async (req, res) => {
-      const { category, page = 1, limit = 20 } = req.query; // Reduce limit to 20
+      const { category, page = 1, limit = 20 } = req.query;
       const filters = {};
   
       if (category) {
@@ -503,6 +503,7 @@ app.get("/api/category/products", async (req, res) => {
                       "parentcode.subproduct.name": 1,
                       "parentcode.subproduct.selling_price": 1,
                       "parentcode.subproduct.thumbnail": 1,
+                      "parentcode.subproduct.slug": 1, // Include slug in projection
                   }
               })
               .skip((page - 1) * parseInt(limit, 10))
