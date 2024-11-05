@@ -482,12 +482,18 @@ app.get("/api/category/products", async (req, res) => {
       const { category, page = 1, limit = 20 } = req.query;
       const filters = {};
   
+      // Apply category filter if provided
       if (category) {
           filters["parentcode.subproduct.category"] = category;
       }
   
-      filters["parentcode.subproduct.status"] = "Website";
-      filters["parentcode.subproduct.selling_price"] = { $gt: 0 };
+      // Filter to include only subproducts with `status: "Website"` and selling_price > 0
+      filters["parentcode.subproduct"] = {
+          $elemMatch: {
+              status: "Website",
+              selling_price: { $gt: 0 }
+          }
+      };
   
       console.log("Query Parameters:", { category, page, limit });
       console.log("Filters Applied:", filters);
@@ -495,7 +501,7 @@ app.get("/api/category/products", async (req, res) => {
       try {
           const productCollection = client.db("Trendy_management").collection("Product");
   
-          // Fetch products with filters, pagination, and projection to limit data size
+          // Fetch products with filters, pagination, and specific projections
           const products = await productCollection
               .find(filters, {
                   projection: {
@@ -503,7 +509,8 @@ app.get("/api/category/products", async (req, res) => {
                       "parentcode.subproduct.name": 1,
                       "parentcode.subproduct.selling_price": 1,
                       "parentcode.subproduct.thumbnail": 1,
-                      "parentcode.subproduct.slug": 1, // Include slug in projection
+                      "parentcode.subproduct.slug": 1,
+                      "parentcode.subproduct.status": 1,  // Include status in projection for verification
                   }
               })
               .skip((page - 1) * parseInt(limit, 10))
@@ -522,6 +529,7 @@ app.get("/api/category/products", async (req, res) => {
           res.status(500).json({ message: "Failed to fetch products" });
       }
   });
+  
   
 
     // Function to check and update OrderManagement collection based on RedxPayment data
