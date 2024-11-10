@@ -1451,7 +1451,7 @@ app.get("/api/products/subcategory/:subCategorySlug", async (req, res) => {
         console.log(`Fetching report data for range: ${start} to ${end}`);
 
         // Define the base query for all documents within the date range
-        const dateRangeQuery = { createdAt: { $gte: start, $lte: end } };
+        const dateRangeQuery = {updatedAt: { $gte: start, $lte: end } };
 
         // Define the queries for different statuses and logistic statuses
         const statusQueries = {
